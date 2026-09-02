@@ -1,0 +1,33 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "migrate": "node migrate-sqlite.js",
+    "migrate:pg": "node-pg-migrate -f migrate.config.js up",
+    "migrate:down": "node-pg-migrate -f migrate.config.js down",
+    "migrate:create": "node-pg-migrate -f migrate.config.js create",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@shopify/shopify-api": "^14.0.0",
+    "@shopify/shopify-app-remix": "^5.0.0",
+    "axios": "^1.19.0",
+    "better-sqlite3": "^13.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "node-pg-migrate": "^9.0.0",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}

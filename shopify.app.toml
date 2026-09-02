@@ -1,0 +1,26 @@
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration
+
+name = "thePanel"
+client_id = "a8a4b1058e50d0e3b55bab735cec7954"
+application_url = "http://localhost:3000"
+embedded = true
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/build/authentication-authorization/manage-access-scopes
+scopes = "read_products,write_products,read_inventory,write_inventory,read_orders"
+
+[auth]
+redirect_urls = [
+  "http://localhost:3000/auth/callback",
+  "http://localhost:3000/auth/shopify/callback"
+]
+
+[webhooks]
+api_version = "2024-10"
+
+[pos]
+embedded = false
+
+[build]
+automatically_update_urls_on_dev = true
+dev_store_url = "collectorslibrary.myshopify.com"
