@@ -26,6 +26,14 @@ const productTags = (product) => {
   return Array.isArray(tags) ? tags.map((t) => String(t).toLowerCase()) : [];
 };
 
+// Shopify taxonomy category and/or classic product type
+const productCategories = (product) => {
+  const meta = typeof product.metadata === 'string' ? safeParse(product.metadata) : product.metadata || {};
+  return [meta.category, meta.product_type]
+    .filter((c) => c !== null && c !== undefined && c !== '')
+    .map((c) => String(c).toLowerCase());
+};
+
 const safeParse = (json) => {
   try {
     return JSON.parse(json || '{}');
@@ -85,6 +93,13 @@ const matchesConditions = (product, conditions = {}) => {
     const missing = wanted.filter((t) => !tags.includes(t));
     if (missing.length > 0) {
       reasons.push(`missing tags_all [${missing.join(', ')}]`);
+    }
+  }
+  if (Array.isArray(conditions.category_any) && conditions.category_any.length > 0) {
+    const cats = productCategories(product);
+    const wanted = conditions.category_any.map((c) => String(c).toLowerCase());
+    if (!wanted.some((c) => cats.includes(c))) {
+      reasons.push(`category [${cats.join(', ') || 'none'}] not in category_any [${wanted.join(', ')}]`);
     }
   }
   if (conditions.requires_images) {

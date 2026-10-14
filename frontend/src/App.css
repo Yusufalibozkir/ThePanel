@@ -64,17 +64,10 @@
 }
 
 .brand-glyph {
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  background: linear-gradient(140deg, var(--brass) 0%, var(--brass-deep) 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #241d12;
-  font-family: 'Fraunces', Georgia, serif;
-  font-weight: 700;
-  font-size: 19px;
+  width: 38px;
+  height: auto;
+  border-radius: 8px;
+  display: block;
   box-shadow: 0 4px 12px rgba(176, 141, 87, 0.3);
 }
 

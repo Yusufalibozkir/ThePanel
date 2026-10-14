@@ -204,7 +204,38 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
                       <span className="mono">{product.sku || '—'}</span>
                     </span>
                   </div>
+                  <div className="info-item">
+                    <span className="info-label">Category</span>
+                    <span className="info-value">
+                      {product.metadata?.category || product.metadata?.product_type || '—'}
+                    </span>
+                  </div>
+                  <div className="info-item">
+                    <span className="info-label">Vendor</span>
+                    <span className="info-value">{product.metadata?.vendor || '—'}</span>
+                  </div>
+                  <div className="info-item">
+                    <span className="info-label">Publisher</span>
+                    <span className="info-value">{product.metadata?.publisher || '—'}</span>
+                  </div>
+                  <div className="info-item">
+                    <span className="info-label">Binding</span>
+                    <span className="info-value">{product.metadata?.binding || '—'}</span>
+                  </div>
+                  <div className="info-item">
+                    <span className="info-label">Year</span>
+                    <span className="info-value">{product.metadata?.year || '—'}</span>
+                  </div>
                 </div>
+                {Array.isArray(product.metadata?.tags) && product.metadata.tags.length > 0 && (
+                  <div className="tag-chips">
+                    {product.metadata.tags.map((tag) => (
+                      <span key={tag} className="tag-chip">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {product.description && (
                   <div className="description-section">
                     <h4>Description</h4>

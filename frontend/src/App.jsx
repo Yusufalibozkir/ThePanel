@@ -5,6 +5,7 @@ import PlatformView from './components/PlatformView';
 import SettingsView from './components/SettingsView';
 import MetadataReview from './components/MetadataReview';
 import { PLATFORMS } from './platforms';
+import logo from './assets/logo.png';
 import { getPageNumbers } from './pagination';
 import {
   SearchIcon,
@@ -36,6 +37,7 @@ function listingStatus(listings, platform) {
 
 export default function App() {
   const [products, setProducts] = useState([]);
+  const [facets, setFacets] = useState(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
@@ -49,14 +51,21 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCondition, setFilterCondition] = useState('all');
   const [filterMetaStatus, setFilterMetaStatus] = useState('all');
+  const [filterTag, setFilterTag] = useState('all');
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [filterVendor, setFilterVendor] = useState('all');
   const [activeTab, setActiveTab] = useState('overview');
 
   const fetchProducts = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await productsAPI.getAll();
+      const [response, facetsResponse] = await Promise.all([
+        productsAPI.getAll(),
+        productsAPI.getFacets().catch(() => null),
+      ]);
       setProducts(response.data.products);
+      if (facetsResponse) setFacets(facetsResponse.data.facets);
     } catch (err) {
       setError('Failed to fetch products: ' + err.message);
       console.error(err);
@@ -79,7 +88,8 @@ export default function App() {
       );
       await fetchProducts();
     } catch (err) {
-      setError('Sync failed: ' + err.message);
+      const detail = err.response?.data?.error || err.response?.data?.message;
+      setError('Sync failed: ' + (detail ? `${err.response.data.message} — ${detail}` : err.message));
       console.error(err);
     } finally {
       setSyncing(false);
@@ -95,6 +105,10 @@ export default function App() {
     const t = setTimeout(() => setSyncMessage(null), 5000);
     return () => clearTimeout(t);
   }, [syncMessage]);
+
+  const productTags = (p) => (Array.isArray(p.metadata?.tags) ? p.metadata.tags : []);
+  const productCategory = (p) => p.metadata?.category || p.metadata?.product_type || null;
+  const productVendor = (p) => p.metadata?.vendor || null;
 
   const filteredProducts = useMemo(() => {
     let filtered = products;
@@ -116,8 +130,24 @@ export default function App() {
       filtered = filtered.filter((p) => (p.metadata_status || 'missing') === filterMetaStatus);
     }
 
+    if (filterTag !== 'all') {
+      filtered = filtered.filter((p) => productTags(p).includes(filterTag));
+    }
+
+    if (filterCategory !== 'all') {
+      filtered = filtered.filter(
+        (p) => (productCategory(p) || '').toLowerCase() === filterCategory.toLowerCase()
+      );
+    }
+
+    if (filterVendor !== 'all') {
+      filtered = filtered.filter(
+        (p) => (productVendor(p) || '').toLowerCase() === filterVendor.toLowerCase()
+      );
+    }
+
     return filtered;
-  }, [products, searchTerm, filterCondition, filterMetaStatus]);
+  }, [products, searchTerm, filterCondition, filterMetaStatus, filterTag, filterCategory, filterVendor]);
 
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -126,7 +156,7 @@ export default function App() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filterCondition, filterMetaStatus, activeTab]);
+  }, [searchTerm, filterCondition, filterMetaStatus, filterTag, filterCategory, filterVendor, activeTab]);
 
   const testShopify = async () => {
     try {
@@ -187,7 +217,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
-            <span className="brand-glyph">P</span>
+            <img className="brand-glyph" src={logo} alt="Collectible Library" />
             <span className="brand-name">ThePanel</span>
           </div>
           <div className="brand-sub">Book Inventory</div>
@@ -287,6 +317,7 @@ export default function App() {
             <PlatformView
               platform={activePlatform}
               products={products}
+              facets={facets}
               onProductClick={handleProductClick}
             />
           ) : (
@@ -365,6 +396,42 @@ export default function App() {
                       <option value="partial">Metadata: Partial</option>
                       <option value="unverified">Metadata: Unverified</option>
                       <option value="missing">Metadata: Missing</option>
+                    </select>
+                    <select
+                      value={filterTag}
+                      onChange={(e) => setFilterTag(e.target.value)}
+                      className="select"
+                    >
+                      <option value="all">All tags</option>
+                      {(facets?.tags || []).map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.value} ({t.count})
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={filterCategory}
+                      onChange={(e) => setFilterCategory(e.target.value)}
+                      className="select"
+                    >
+                      <option value="all">All categories</option>
+                      {(facets?.categories || []).map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {c.value} ({c.count})
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={filterVendor}
+                      onChange={(e) => setFilterVendor(e.target.value)}
+                      className="select"
+                    >
+                      <option value="all">All vendors</option>
+                      {(facets?.vendors || []).map((v) => (
+                        <option key={v.value} value={v.value}>
+                          {v.value} ({v.count})
+                        </option>
+                      ))}
                     </select>
                     <select
                       value={itemsPerPage}

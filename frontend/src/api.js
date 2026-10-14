@@ -20,6 +20,7 @@ export const shopifyAPI = {
 // Products API
 export const productsAPI = {
   getAll: (filters) => api.get('/products', { params: filters }),
+  getFacets: () => api.get('/products/facets'),
   getById: (id) => api.get(`/products/${id}`),
   create: (data) => api.post('/products', data),
   update: (id, data) => api.put(`/products/${id}`, data),

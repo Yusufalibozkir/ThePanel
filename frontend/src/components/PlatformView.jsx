@@ -10,9 +10,12 @@ import {
 } from './icons';
 import './PlatformView.css';
 
-export default function PlatformView({ platform, products, onProductClick }) {
+export default function PlatformView({ platform, products, facets, onProductClick }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [tagFilter, setTagFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [vendorFilter, setVendorFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
 
@@ -43,6 +46,19 @@ export default function PlatformView({ platform, products, onProductClick }) {
 
       if (!matchesSearch) return false;
 
+      const tags = Array.isArray(product.metadata?.tags) ? product.metadata.tags : [];
+      if (tagFilter !== 'all' && !tags.includes(tagFilter)) return false;
+
+      if (categoryFilter !== 'all') {
+        const category = product.metadata?.category || product.metadata?.product_type || '';
+        if (category.toLowerCase() !== categoryFilter.toLowerCase()) return false;
+      }
+
+      if (vendorFilter !== 'all') {
+        const vendor = product.metadata?.vendor || '';
+        if (vendor.toLowerCase() !== vendorFilter.toLowerCase()) return false;
+      }
+
       const status = getListingStatus(product, platform.id);
       if (statusFilter === 'all') return true;
       if (statusFilter === 'listed') return status === 'active';
@@ -51,7 +67,7 @@ export default function PlatformView({ platform, products, onProductClick }) {
       if (statusFilter === 'errors') return status === 'error';
       return true;
     });
-  }, [products, platform.id, searchTerm, statusFilter]);
+  }, [products, platform.id, searchTerm, statusFilter, tagFilter, categoryFilter, vendorFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -59,7 +75,7 @@ export default function PlatformView({ platform, products, onProductClick }) {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, statusFilter, platform.id]);
+  }, [searchTerm, statusFilter, tagFilter, categoryFilter, vendorFilter, platform.id]);
 
   const formatStatus = (status) => {
     const labels = {
@@ -176,6 +192,42 @@ export default function PlatformView({ platform, products, onProductClick }) {
               <option value="unlisted">Not listed</option>
               <option value="drafts">Drafts</option>
               <option value="errors">Errors</option>
+            </select>
+            <select
+              value={tagFilter}
+              onChange={(e) => setTagFilter(e.target.value)}
+              className="select"
+            >
+              <option value="all">All tags</option>
+              {(facets?.tags || []).map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.value} ({t.count})
+                </option>
+              ))}
+            </select>
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="select"
+            >
+              <option value="all">All categories</option>
+              {(facets?.categories || []).map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.value} ({c.count})
+                </option>
+              ))}
+            </select>
+            <select
+              value={vendorFilter}
+              onChange={(e) => setVendorFilter(e.target.value)}
+              className="select"
+            >
+              <option value="all">All vendors</option>
+              {(facets?.vendors || []).map((v) => (
+                <option key={v.value} value={v.value}>
+                  {v.value} ({v.count})
+                </option>
+              ))}
             </select>
             <select
               value={itemsPerPage}

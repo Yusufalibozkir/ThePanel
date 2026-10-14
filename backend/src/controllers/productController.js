@@ -1,6 +1,17 @@
 const productService = require('../services/productService');
 const platformListingService = require('../services/platformListingService');
 
+// Distinct filterable values (tags, categories, vendor, ...) with counts
+const getFacets = async (req, res) => {
+  try {
+    const facets = await productService.getFacets();
+    res.json({ success: true, facets });
+  } catch (error) {
+    console.error('Error fetching facets:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch facets', error: error.message });
+  }
+};
+
 // Get all products
 const getAllProducts = async (req, res) => {
   try {
@@ -11,6 +22,9 @@ const getAllProducts = async (req, res) => {
       minPrice: req.query.minPrice,
       maxPrice: req.query.maxPrice,
       sold: req.query.sold,
+      tags: req.query.tags,
+      category: req.query.category,
+      vendor: req.query.vendor,
     };
 
     const products = await productService.getAll(filters);
@@ -157,6 +171,7 @@ const markSold = async (req, res) => {
 };
 
 module.exports = {
+  getFacets,
   getAllProducts,
   getProductById,
   createProduct,

@@ -16,7 +16,8 @@ const PLATFORMS = [
     { key: 'refresh_token', label: 'Refresh token' },
   ]},
   { id: 'abebooks', name: 'AbeBooks', fields: [
-    { key: 'api_key', label: 'Bookseller account email' },
+    { key: 'username', label: 'User ID / Client PIN' },
+    { key: 'api_key', label: 'API key' },
   ]},
 ];
 
@@ -151,9 +152,9 @@ function CredentialsCard({ platform, onChanged }) {
       </div>
       <p className="settings-hint">
         {platform.id === 'abebooks'
-          ? 'AbeBooks is an export-file channel — credentials are optional.'
+          ? 'User ID: Members Menu → Account Details → Marketplace Profile. API key: regenerate at abebooks.com/servlet/ApiKey. Test uses the Inventory Update server (port 10027).'
           : platform.id === 'ebay'
-            ? 'OAuth flow arrives with the Phase 3 adapter; paste keys manually for now.'
+            ? 'Keys from developer.ebay.com → Application Keys. Test connection exchanges them for an OAuth token.'
             : 'Etsy OAuth arrives in Phase 4; paste keys manually for now.'}
       </p>
     </div>

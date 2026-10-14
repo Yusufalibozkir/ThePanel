@@ -1,0 +1,16 @@
+[Unit]
+Description=ThePanel backend (Express + SQLite)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/thepanel/backend
+ExecStart=/usr/bin/node src/server.js
+Environment=NODE_ENV=production
+Restart=on-failure
+RestartSec=3
+User=thepanel
+Group=thepanel
+
+[Install]
+WantedBy=multi-user.target

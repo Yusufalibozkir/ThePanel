@@ -81,13 +81,46 @@ test('vault: missing/invalid APP_ENCRYPTION_KEY rejected with guidance', () => {
   assert.throws(() => credentialService.save('etsy', { x: 1 }), /APP_ENCRYPTION_KEY/);
 });
 
-test('vault: test-connection stubs', async () => {
+test('vault: test-connection paths (network mocked)', async () => {
   process.env.APP_ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
-  credentialService.save('abebooks', { api_key: 'k' });
+  const axios = require('axios');
+  const originalPost = axios.post;
+  const originalPut = axios.put;
+
   const none = await credentialService.testConnection('etsy');
   assert.equal(none.success, false);
-  const abe = await credentialService.testConnection('abebooks');
-  assert.equal(abe.success, true);
+
+  credentialService.save('ebay', { client_id: 'id', client_secret: 'sec' });
+  credentialService.save('abebooks', { api_key: 'k' });
+  const missingFields = await credentialService.testConnection('abebooks');
+  assert.equal(missingFields.success, false);
+  assert.match(missingFields.message, /Missing User ID/);
+
+  try {
+    axios.post = async () => ({ status: 200, data: { access_token: 't', expires_in: 7200 } });
+    const ebayOk = await credentialService.testConnection('ebay');
+    assert.equal(ebayOk.success, true);
+    assert.match(ebayOk.message, /application token/);
+
+    axios.post = async () => ({ status: 401, data: { error: 'invalid_client', error_description: 'client authentication failed' } });
+    const ebayBad = await credentialService.testConnection('ebay');
+    assert.equal(ebayBad.success, false);
+    assert.match(ebayBad.message, /client authentication failed/);
+
+    credentialService.save('abebooks', { username: 'BOOKSELLER', api_key: 'k' });
+    axios.put = async () => ({ status: 200, data: '<?xml version="1.0"?><inventoryUpdateResponse version="1.0"><code>600</code><message lang="en">Successful transaction</message></inventoryUpdateResponse>' });
+    const abeOk = await credentialService.testConnection('abebooks');
+    assert.equal(abeOk.success, true);
+    assert.match(abeOk.message, /healthy/);
+
+    axios.put = async () => ({ status: 200, data: '<?xml version="1.0"?><requestError version="1.0"><code>110</code><message lang="en">User is invalid</message></requestError>' });
+    const abeBad = await credentialService.testConnection('abebooks');
+    assert.equal(abeBad.success, false);
+    assert.match(abeBad.message, /user is invalid/i);
+  } finally {
+    axios.post = originalPost;
+    axios.put = originalPut;
+  }
 });
 
 test('db: query paths sanity (SELECT vs write) on patched module', () => {

@@ -23,6 +23,7 @@ const PRODUCTS_QUERY = `
           descriptionHtml
           vendor
           productType
+          category { id name }
           tags
           images(first: 50) {
             edges {
@@ -54,7 +55,7 @@ const SHOP_QUERY = `
     shop {
       name
       email
-      domain
+      primaryDomain { url }
       myshopifyDomain
       currencyCode
     }
@@ -67,6 +68,7 @@ const normalizeProduct = (node) => ({
   body_html: node.descriptionHtml || '',
   vendor: node.vendor,
   product_type: node.productType,
+  category: node.category?.name || null,
   tags: Array.isArray(node.tags) ? node.tags : [],
   images: (node.images?.edges || []).map((edge) => ({ src: edge.node.url })),
   variants: (node.variants?.edges || []).map((edge) => ({
@@ -87,7 +89,7 @@ class ShopifyService {
         shop: {
           name: data.shop.name,
           email: data.shop.email,
-          domain: data.shop.domain || data.shop.myshopifyDomain,
+          domain: data.shop.primaryDomain?.url || data.shop.myshopifyDomain,
           currency: data.shop.currencyCode,
         },
         message: 'Successfully connected to Shopify',
@@ -136,6 +138,7 @@ class ShopifyService {
             descriptionHtml
             vendor
             productType
+            category { id name }
             tags
             images(first: 50) { edges { node { url altText } } }
             variants(first: 20) { edges { node { id sku barcode price inventoryQuantity } } }

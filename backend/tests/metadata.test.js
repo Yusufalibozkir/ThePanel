@@ -113,6 +113,19 @@ test('rules: tags_any / tags_all', () => {
   assert.equal(evaluateRule(product(), all).eligible, true);
 });
 
+test('rules: category_any matches taxonomy category or product_type', () => {
+  const rule = { enabled: true, conditions: { category_any: ['novels'] }, price_modifier: {} };
+  assert.equal(
+    evaluateRule(product({ metadata: { category: 'Novels', tags: [] } }), rule).eligible,
+    true
+  );
+  assert.equal(
+    evaluateRule(product({ metadata: { product_type: 'Novels', tags: [] } }), rule).eligible,
+    true
+  );
+  assert.equal(evaluateRule(product({ metadata: { tags: [] } }), rule).eligible, false);
+});
+
 test('rules: price bounds and requires_images', () => {
   const bounds = { enabled: true, conditions: { min_price: 10, max_price: 20 }, price_modifier: {} };
   assert.equal(evaluateRule(product({ price: 25 }), bounds).eligible, false);

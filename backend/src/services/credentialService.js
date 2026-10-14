@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const axios = require('axios');
 const { db, query } = require('../config/database');
 
 // Credential vault: channel credentials are encrypted at rest with
@@ -65,6 +66,7 @@ class CredentialService {
     'app_id',
     'cert_id',
     'api_key',
+    'username',
     'shared_secret',
   ];
 
@@ -142,8 +144,9 @@ class CredentialService {
     return { success: true };
   }
 
-  // Connection tests. eBay/Etsy go live in Phase 3/4; AbeBooks is an export
-  // channel with nothing to test.
+  // Connection tests hit each platform's real endpoint. eBay is validated
+  // against its OAuth token service; AbeBooks against the Inventory Update
+  // server (a probe request that never mutates inventory).
   async testConnection(platform) {
     const stored = this.get(platform);
     if (!stored) {
@@ -151,13 +154,86 @@ class CredentialService {
     }
     switch (platform) {
       case 'ebay':
-        return { success: false, message: 'eBay connection test arrives with the Phase 3 adapter' };
+        return this.testEbay(stored.credentials);
       case 'etsy':
         return { success: false, message: 'Etsy connection test arrives with the Phase 4 adapter' };
       case 'abebooks':
-        return { success: true, message: 'AbeBooks is an export channel — no connection needed' };
+        return this.testAbebooks(stored.credentials);
       default:
         return { success: false, message: `Unknown platform: ${platform}` };
+    }
+  }
+
+  // Fetching an OAuth token proves the App ID (client_id) + Cert ID
+  // (client_secret) pair is valid. When a refresh token is stored we exchange
+  // it instead, because that is the grant the Sell APIs depend on.
+  async testEbay(credentials) {
+    const { client_id, client_secret, refresh_token } = credentials || {};
+    if (!client_id || !client_secret) {
+      return { success: false, message: 'Missing App ID (client_id) or Cert ID (client_secret)' };
+    }
+    const basic = Buffer.from(`${client_id}:${client_secret}`).toString('base64');
+    const body = refresh_token
+      ? `grant_type=refresh_token&refresh_token=${encodeURIComponent(refresh_token)}`
+      : `grant_type=client_credentials&scope=${encodeURIComponent('https://api.ebay.com/oauth/api_scope')}`;
+    try {
+      const res = await axios.post('https://api.ebay.com/identity/v1/oauth2/token', body, {
+        headers: {
+          Authorization: `Basic ${basic}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        timeout: 15000,
+        validateStatus: () => true,
+      });
+      if (res.status === 200 && res.data?.access_token) {
+        const grant = refresh_token ? 'user token (refresh grant)' : 'application token';
+        return { success: true, message: `eBay endpoint healthy — ${grant} issued, expires in ${res.data.expires_in}s` };
+      }
+      const desc = Array.isArray(res.data?.error_description)
+        ? res.data.error_description[0]
+        : res.data?.error_description || res.data?.error || `HTTP ${res.status}`;
+      return { success: false, message: `eBay rejected the credentials: ${desc}` };
+    } catch (err) {
+      return { success: false, message: `eBay endpoint unreachable: ${err.code || err.message}` };
+    }
+  }
+
+  // The Inventory Update server authenticates every request via the
+  // <action> element. A probe with an empty book list never touches
+  // inventory; auth failures come back as codes 110/111.
+  async testAbebooks(credentials) {
+    const { username, api_key } = credentials || {};
+    if (!username || !api_key) {
+      return { success: false, message: 'Missing User ID (username) or API key' };
+    }
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const xml =
+      '<?xml version="1.0" encoding="ISO-8859-1"?>' +
+      '<inventoryUpdateRequest version="1.0">' +
+      `<action name="bookupdate"><username>${esc(username)}</username><password>${esc(api_key)}</password></action>` +
+      '<AbebookList></AbebookList>' +
+      '</inventoryUpdateRequest>';
+    try {
+      const res = await axios.put('https://inventoryupdate.abebooks.com:10027/', xml, {
+        headers: { 'Content-Type': 'text/xml' },
+        timeout: 15000,
+        validateStatus: () => true,
+        // Response body is XML, keep axios from parsing it
+        transformResponse: [(data) => data],
+      });
+      const codeMatch = String(res.data || '').match(/<code>\s*(\d+)\s*<\/code>/);
+      const msgMatch = String(res.data || '').match(/<message[^>]*>([^<]*)<\/message>/);
+      const code = codeMatch ? parseInt(codeMatch[1], 10) : null;
+      const message = msgMatch ? msgMatch[1] : `HTTP ${res.status}`;
+      if (code === 110) return { success: false, message: 'AbeBooks: user is invalid — check User ID and API key' };
+      if (code === 111) return { success: false, message: 'AbeBooks: error validating the user — try again' };
+      if (code === 600) return { success: true, message: 'AbeBooks endpoint healthy — credentials accepted' };
+      return { success: true, message: `AbeBooks endpoint reachable (code ${code}: ${message}) — no auth rejection` };
+    } catch (err) {
+      return {
+        success: false,
+        message: `AbeBooks endpoint unreachable: ${err.code || err.message} (outbound port 10027 must be open)`,
+      };
     }
   }
 }

@@ -61,6 +61,7 @@ class RulesService {
       'vintage_only',
       'tags_any',
       'tags_all',
+      'category_any',
       'requires_images',
     ]);
     for (const key of Object.keys(c)) {
@@ -69,6 +70,7 @@ class RulesService {
     if (c.conditions !== undefined && !Array.isArray(c.conditions)) return false;
     if (c.tags_any !== undefined && !Array.isArray(c.tags_any)) return false;
     if (c.tags_all !== undefined && !Array.isArray(c.tags_all)) return false;
+    if (c.category_any !== undefined && !Array.isArray(c.category_any)) return false;
     for (const key of ['min_price', 'max_price', 'year_before', 'year_after']) {
       if (c[key] !== undefined && !Number.isFinite(Number(c[key]))) return false;
     }

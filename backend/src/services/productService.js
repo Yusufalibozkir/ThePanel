@@ -52,6 +52,7 @@ class ProductService {
     const metadata = {
       vendor: shopifyProduct.vendor || null,
       product_type: shopifyProduct.product_type || null,
+      category: shopifyProduct.category || null,
       tags: Array.isArray(shopifyProduct.tags) ? shopifyProduct.tags : [],
       publisher: tags.publisher,
       year: tags.year,
@@ -187,11 +188,97 @@ class ProductService {
     } else if (filters.sold === 'false') {
       sql += ' AND sold_at IS NULL';
     }
+    // Tag filter (comma-separated list, case-insensitive, any-match)
+    if (filters.tags) {
+      const wanted = String(filters.tags)
+        .split(',')
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean);
+      if (wanted.length > 0) {
+        const placeholders = wanted.map(() => '?').join(', ');
+        sql += ` AND EXISTS (
+          SELECT 1 FROM json_each(products.metadata, '$.tags') je
+          WHERE lower(je.value) IN (${placeholders})
+        )`;
+        params.push(...wanted);
+      }
+    }
+    // Category filter: matches the Shopify taxonomy category or product type
+    if (filters.category) {
+      const wanted = String(filters.category).toLowerCase();
+      sql += ` AND (
+        lower(json_extract(products.metadata, '$.category')) = ?
+        OR lower(json_extract(products.metadata, '$.product_type')) = ?
+      )`;
+      params.push(wanted, wanted);
+    }
+    if (filters.vendor) {
+      sql += ` AND lower(json_extract(products.metadata, '$.vendor')) = ?`;
+      params.push(String(filters.vendor).toLowerCase());
+    }
 
     sql += ' ORDER BY created_at DESC';
 
     const result = query(sql, params);
     return result.rows.map(this.parseProduct);
+  }
+
+  // Aggregate filterable values (tags, categories, vendor, binding, publisher,
+  // year) with counts, for populating filter dropdowns. Cheap single scan.
+  async getFacets() {
+    const rows = query(
+      'SELECT condition, metadata FROM products'
+    ).rows;
+
+    const tally = (map, value) => {
+      if (value === null || value === undefined || value === '') return;
+      map.set(value, (map.get(value) || 0) + 1);
+    };
+    const byCountDesc = (map) =>
+      [...map.entries()]
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+
+    const tags = new Map();
+    const categories = new Map();
+    const vendors = new Map();
+    const bindings = new Map();
+    const publishers = new Map();
+    const years = new Map();
+
+    for (const row of rows) {
+      const meta = this.parseMeta(row.metadata);
+      for (const tag of Array.isArray(meta.tags) ? meta.tags : []) {
+        tally(tags, tag);
+      }
+      tally(categories, meta.category);
+      tally(categories, meta.product_type);
+      tally(vendors, meta.vendor);
+      tally(bindings, meta.binding);
+      tally(publishers, meta.publisher);
+      const year = Number(meta.year);
+      if (meta.year !== null && meta.year !== undefined && Number.isFinite(year) && year > 0) {
+        tally(years, year);
+      }
+    }
+
+    return {
+      tags: byCountDesc(tags),
+      categories: byCountDesc(categories),
+      vendors: byCountDesc(vendors),
+      bindings: byCountDesc(bindings),
+      publishers: byCountDesc(publishers),
+      years: byCountDesc(years).sort((a, b) => Number(b.value) - Number(a.value)),
+    };
+  }
+
+  parseMeta(metadata) {
+    try {
+      const meta = typeof metadata === 'string' ? JSON.parse(metadata || '{}') : metadata || {};
+      return meta || {};
+    } catch {
+      return {};
+    }
   }
 
   async getById(id) {

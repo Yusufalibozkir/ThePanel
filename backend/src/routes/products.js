@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const productController = require('../controllers/productController');
 
+// Filterable values (tags, categories, ...) — must precede /:id
+router.get('/facets', productController.getFacets);
+
 // Get all products
 router.get('/', productController.getAllProducts);
 
