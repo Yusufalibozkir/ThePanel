@@ -161,6 +161,31 @@ try {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_logs_status ON sync_logs(status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON sync_logs(timestamp)`);
 
+  // product_changes: per-field audit trail grouped by a single save (change_id).
+  // The products table is the "truth" mirror of Shopify; manual edits are stored
+  // ONLY here as an overlay — the newest 'manual' value per field is the effective
+  // local value (falls back to the truth value when entries are deleted).
+  // 'sync' entries are an informational record of Shopify-side truth changes.
+  // Deleting a 'manual' entry peels that edit back to the previous value or truth.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS product_changes (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      change_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      field TEXT NOT NULL,
+      old_value TEXT,
+      new_value TEXT,
+      source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'sync')),
+      changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    )
+  `);
+  console.log('✓ product_changes table ready');
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_changes_product ON product_changes(product_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_changes_change ON product_changes(change_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_changes_product_field ON product_changes(product_id, field)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_changes_manual_fields ON product_changes(product_id, source)`);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS platform_credentials (
       platform TEXT PRIMARY KEY CHECK(platform IN ('ebay', 'abebooks', 'etsy')),

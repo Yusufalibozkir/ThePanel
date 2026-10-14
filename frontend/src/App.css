@@ -566,6 +566,21 @@ tbody tr:last-child td { border-bottom: none; }
   max-width: 380px;
 }
 
+.edited-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 7px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: rgba(176, 141, 87, 0.16);
+  color: var(--brass-deep, #8a6d3b);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: help;
+}
+
 .mono {
   font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace;
   font-size: 12px;

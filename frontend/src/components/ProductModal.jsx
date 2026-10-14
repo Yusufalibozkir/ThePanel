@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
-import DOMPurify from 'dompurify';
 import {
   CloseIcon,
   BookIcon,
   TrashIcon,
   CopyIcon,
   EditIcon,
+  HistoryIcon,
 } from './icons';
+import DescriptionEditor from './DescriptionEditor';
+import { sanitizeDescription } from '../descriptionUtils';
+import { productsAPI } from '../api';
 import './ProductModal.css';
 
 const CHANNELS = [
@@ -14,6 +17,17 @@ const CHANNELS = [
   { id: 'abebooks', name: 'AbeBooks', glyph: 'A' },
   { id: 'etsy', name: 'Etsy', glyph: 'E' },
 ];
+
+const FIELD_LABELS = {
+  title: 'Title',
+  author: 'Author',
+  isbn: 'ISBN',
+  price: 'Price',
+  cost: 'Cost',
+  quantity: 'Quantity',
+  condition: 'Condition',
+  description: 'Description',
+};
 
 function getPlatformStatus(product, platformId) {
   const listing = product.platform_listings?.find((l) => l.platform === platformId);
@@ -25,7 +39,215 @@ function getPlatformStatus(product, platformId) {
   return listing ? map[listing.status] || map.draft : { label: 'Not listed', tone: 'unlisted' };
 }
 
-function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
+function formatValue(field, value) {
+  if (value === null || value === undefined) return '—';
+  if (field === 'price' || field === 'cost') return `$${Number(value).toFixed(2)}`;
+  if (field === 'quantity') return String(value);
+  return String(value);
+}
+
+function renderHtmlDescription(html) {
+  return sanitizeDescription(html);
+}
+
+function EditedBadge({ field, product, onReset }) {
+  const truth = product.shopify_truth?.[field];
+  const [showTruth, setShowTruth] = useState(false);
+
+  return (
+    <span className="edited-badge-wrap">
+      <button
+        className="edited-badge"
+        title="Edited locally — Shopify truth untouched. Click to compare."
+        onClick={(e) => {
+          e.stopPropagation();
+          setShowTruth((s) => !s);
+        }}
+      >
+        Edited
+      </button>
+      {showTruth && (
+        <div className="truth-compare" onClick={(e) => e.stopPropagation()}>
+          <div className="truth-compare-head">
+            <span className="truth-compare-title">
+              {FIELD_LABELS[field] || field}: local vs Shopify
+            </span>
+            <button
+              className="btn btn-secondary btn-small"
+              title="Discard this local edit and go back to the Shopify value"
+              onClick={() => onReset(field)}
+            >
+              Use Shopify value
+            </button>
+          </div>
+          <div className="truth-compare-body">
+            <div className="truth-pane">
+              <span className="pane-label">Shopify (truth)</span>
+              {field === 'description' ? (
+                <div className="description-html" dangerouslySetInnerHTML={{ __html: renderHtmlDescription(truth) }} />
+              ) : (
+                <span className="pane-value">{formatValue(field, truth)}</span>
+              )}
+            </div>
+            <div className="truth-pane local">
+              <span className="pane-label">Local edit</span>
+              {field === 'description' ? (
+                <div className="description-html" dangerouslySetInnerHTML={{ __html: renderHtmlDescription(product[field]) }} />
+              ) : (
+                <span className="pane-value">{formatValue(field, product[field])}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
+function HistoryTab({ product, onProductUpdated }) {
+  const [entries, setEntries] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const loadHistory = async () => {
+    try {
+      const res = await productsAPI.getChanges(product.id);
+      setEntries(res.data.entries);
+    } catch (err) {
+      setError(err.response?.data?.message || err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.id]);
+
+  const handleDeleteEntry = async (entry) => {
+    const fields = entry.changes.map((c) => FIELD_LABELS[c.field] || c.field).join(', ');
+    const message =
+      entry.source === 'manual'
+        ? `Delete this edit (${fields})?\n\n` +
+          'This only removes the history entry — your current data is NOT reverted unless this was the latest edit for a field. ' +
+          'Fields whose newest edit is deleted fall back to the previous value or the Shopify truth, and that protection is gone permanently.'
+        : `Delete this sync record (${fields})?\n\nThis is an informational record of a Shopify-side change. Deleting it does not affect any data.`;
+    if (!confirm(message)) return;
+
+    setBusy(true);
+    setError(null);
+    try {
+      await productsAPI.deleteChange(product.id, entry.change_id);
+      await loadHistory();
+      onProductUpdated();
+    } catch (err) {
+      setError(err.response?.data?.message || err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleResetAll = async () => {
+    if (
+      !confirm(
+        'Remove ALL local edits for this product?\n\nEvery field goes back to the Shopify truth value. The full edit history for this product is deleted. This cannot be undone.'
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await productsAPI.resetLocalEdits(product.id);
+      await loadHistory();
+      onProductUpdated();
+    } catch (err) {
+      setError(err.response?.data?.message || err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const hasLocalEdits = (product.local_edits || []).length > 0;
+
+  if (loading) return <div className="history-empty">Loading history…</div>;
+
+  return (
+    <div className="history-tab">
+      <div className="history-head">
+        <div>
+          <div className="history-title">Change history</div>
+          <div className="history-sub">
+            Shopify stays the truth — your edits are kept as a local overlay you can compare, peel back, or delete.
+          </div>
+        </div>
+        {hasLocalEdits && (
+          <button className="btn btn-secondary btn-small" disabled={busy} onClick={handleResetAll}>
+            Reset all to Shopify
+          </button>
+        )}
+      </div>
+
+      {error && <div className="history-error">{error}</div>}
+
+      {!entries || entries.length === 0 ? (
+        <div className="history-empty">No changes recorded yet.</div>
+      ) : (
+        <div className="history-list">
+          {entries.map((entry) => (
+            <div key={entry.change_id} className={`history-entry src-${entry.source}`}>
+              <div className="history-entry-head">
+                <span className={`history-source-badge src-${entry.source}`}>
+                  {entry.source === 'manual' ? 'Local edit' : 'Shopify sync'}
+                </span>
+                <span className="history-time">{new Date(entry.changed_at.replace(' ', 'T') + 'Z').toLocaleString()}</span>
+                <button
+                  className="btn btn-danger btn-small history-delete"
+                  disabled={busy}
+                  onClick={() => handleDeleteEntry(entry)}
+                  title="Delete this entry"
+                >
+                  <TrashIcon size={12} />
+                  Delete
+                </button>
+              </div>
+              <div className="history-fields">
+                {entry.changes.map((c, i) => (
+                  <div key={i} className="history-field">
+                    <span className="history-field-name">{FIELD_LABELS[c.field] || c.field}</span>
+                    {c.field === 'description' ? (
+                      <div className="history-desc-diff">
+                        <div className="history-desc-pane">
+                          <span className="pane-label">Before</span>
+                          <div className="description-html" dangerouslySetInnerHTML={{ __html: renderHtmlDescription(c.old_value) }} />
+                        </div>
+                        <div className="history-desc-pane">
+                          <span className="pane-label">After</span>
+                          <div className="description-html" dangerouslySetInnerHTML={{ __html: renderHtmlDescription(c.new_value) }} />
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="history-field-values">
+                        <span className="old">{formatValue(c.field, c.old_value)}</span>
+                        <span className="arrow">→</span>
+                        <span className="new">{formatValue(c.field, c.new_value)}</span>
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProductModal({ product, onClose, onSave, onDelete, onDuplicate, onProductUpdated }) {
+  const [activeTab, setActiveTab] = useState('details');
   const [isEditing, setIsEditing] = useState(false);
   const [editedProduct, setEditedProduct] = useState({ ...product });
   const [selectedImage, setSelectedImage] = useState(0);
@@ -42,14 +264,33 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
     };
   }, [onClose]);
 
+  // Keep the edit form in sync when the parent refreshes the product
+  // (history deletions, resets) — but never clobber in-progress edits.
+  useEffect(() => {
+    if (!isEditing) {
+      setEditedProduct({ ...product });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product]);
+
   const handleSave = () => {
-    onSave(editedProduct);
+    onSave({ ...editedProduct, description: sanitizeDescription(editedProduct.description) });
     setIsEditing(false);
   };
 
   const handleCancel = () => {
     setEditedProduct({ ...product });
     setIsEditing(false);
+  };
+
+  // Discard the local overlay for one field — back to the Shopify truth value
+  const handleUseTruth = async (field) => {
+    const updated = { ...product, [field]: product.shopify_truth?.[field] };
+    try {
+      await onSave(updated);
+    } catch {
+      /* error handled by parent */
+    }
   };
 
   const handlePublishToPlatform = (platformName) => {
@@ -61,234 +302,289 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
     return condition.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase());
   };
 
+  const isEdited = (field) => (product.local_edits || []).includes(field);
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-header">
-          <h2>{isEditing ? 'Edit product' : 'Product details'}</h2>
+          <div className="modal-header-tabs">
+            <button
+              className={`modal-tab ${activeTab === 'details' ? 'active' : ''}`}
+              onClick={() => setActiveTab('details')}
+            >
+              <BookIcon size={14} />
+              Details
+            </button>
+            <button
+              className={`modal-tab ${activeTab === 'history' ? 'active' : ''}`}
+              onClick={() => {
+                setActiveTab('history');
+                setIsEditing(false);
+              }}
+            >
+              <HistoryIcon size={14} />
+              History
+              {(product.local_edits || []).length > 0 && (
+                <span className="history-count">{product.local_edits.length}</span>
+              )}
+            </button>
+          </div>
           <button className="modal-close" onClick={onClose} aria-label="Close">
             <CloseIcon size={17} />
           </button>
         </div>
 
         <div className="modal-body">
-          <div className="image-section">
-            <div className="main-image">
-              {product.images && product.images.length > 0 ? (
-                <img src={product.images[selectedImage]} alt={product.title} />
-              ) : (
-                <div className="no-image-large">
-                  <BookIcon size={44} />
-                </div>
-              )}
+          {activeTab === 'history' ? (
+            <div className="history-body">
+              <HistoryTab product={product} onProductUpdated={onProductUpdated} />
             </div>
-            {product.images && product.images.length > 1 && (
-              <div className="image-thumbnails">
-                {product.images.map((img, idx) => (
-                  <img
-                    key={idx}
-                    src={img}
-                    alt={`${product.title} ${idx + 1}`}
-                    className={selectedImage === idx ? 'active' : ''}
-                    onClick={() => setSelectedImage(idx)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="info-section">
-            {isEditing ? (
-              <>
-                <div className="form-group">
-                  <label>Title</label>
-                  <input
-                    type="text"
-                    value={editedProduct.title}
-                    onChange={(e) => setEditedProduct({ ...editedProduct, title: e.target.value })}
-                  />
+          ) : (
+            <>
+              <div className="image-section">
+                <div className="main-image">
+                  {product.images && product.images.length > 0 ? (
+                    <img src={product.images[selectedImage]} alt={product.title} />
+                  ) : (
+                    <div className="no-image-large">
+                      <BookIcon size={44} />
+                    </div>
+                  )}
                 </div>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Author</label>
-                    <input
-                      type="text"
-                      value={editedProduct.author || ''}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, author: e.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>ISBN</label>
-                    <input
-                      type="text"
-                      value={editedProduct.isbn || ''}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, isbn: e.target.value })}
-                    />
-                  </div>
-                </div>
-                <div className="form-row form-row-3">
-                  <div className="form-group">
-                    <label>Price ($)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={editedProduct.price}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, price: e.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Quantity</label>
-                    <input
-                      type="number"
-                      value={editedProduct.quantity}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, quantity: e.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Condition</label>
-                    <select
-                      value={editedProduct.condition || ''}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, condition: e.target.value })}
-                    >
-                      <option value="">Select…</option>
-                      <option value="new">New</option>
-                      <option value="like_new">Like New</option>
-                      <option value="very_good">Very Good</option>
-                      <option value="good">Good</option>
-                      <option value="acceptable">Acceptable</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label>Description</label>
-                  <textarea
-                    value={editedProduct.description || ''}
-                    onChange={(e) => setEditedProduct({ ...editedProduct, description: e.target.value })}
-                    rows="5"
-                  />
-                </div>
-              </>
-            ) : (
-              <>
-                <h3 className="product-title-detail">{product.title}</h3>
-                <div className="info-grid">
-                  <div className="info-item">
-                    <span className="info-label">Author</span>
-                    <span className="info-value">{product.author || '—'}</span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">ISBN</span>
-                    <span className="info-value">
-                      <span className="mono">{product.isbn || '—'}</span>
-                    </span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Price</span>
-                    <span className="info-value price">${parseFloat(product.price).toFixed(2)}</span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Quantity</span>
-                    <span className="info-value">{product.quantity}</span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Condition</span>
-                    <span className="info-value">
-                      <span className={`condition-badge c-${product.condition || 'none'}`}>
-                        {formatCondition(product.condition)}
-                      </span>
-                    </span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">SKU</span>
-                    <span className="info-value">
-                      <span className="mono">{product.sku || '—'}</span>
-                    </span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Category</span>
-                    <span className="info-value">
-                      {product.metadata?.category || product.metadata?.product_type || '—'}
-                    </span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Vendor</span>
-                    <span className="info-value">{product.metadata?.vendor || '—'}</span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Publisher</span>
-                    <span className="info-value">{product.metadata?.publisher || '—'}</span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Binding</span>
-                    <span className="info-value">{product.metadata?.binding || '—'}</span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Year</span>
-                    <span className="info-value">{product.metadata?.year || '—'}</span>
-                  </div>
-                </div>
-                {Array.isArray(product.metadata?.tags) && product.metadata.tags.length > 0 && (
-                  <div className="tag-chips">
-                    {product.metadata.tags.map((tag) => (
-                      <span key={tag} className="tag-chip">
-                        {tag}
-                      </span>
+                {product.images && product.images.length > 1 && (
+                  <div className="image-thumbnails">
+                    {product.images.map((img, idx) => (
+                      <img
+                        key={idx}
+                        src={img}
+                        alt={`${product.title} ${idx + 1}`}
+                        className={selectedImage === idx ? 'active' : ''}
+                        onClick={() => setSelectedImage(idx)}
+                      />
                     ))}
                   </div>
                 )}
-                {product.description && (
-                  <div className="description-section">
-                    <h4>Description</h4>
-                    <div
-                      className="description-html"
-                      dangerouslySetInnerHTML={{
-                        __html: DOMPurify.sanitize(product.description, {
-                          ALLOWED_TAGS: ['p', 'br', 'b', 'strong', 'i', 'em', 'u', 'ul', 'ol', 'li', 'a', 'span', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
-                          ALLOWED_ATTR: ['href', 'target', 'rel'],
-                        }),
-                      }}
-                    />
-                  </div>
-                )}
-              </>
-            )}
-
-            <div className="platform-section">
-              <h4>Channel listings</h4>
-              <div className="platform-cards">
-                {CHANNELS.map((channel) => {
-                  const status = getPlatformStatus(product, channel.id);
-                  return (
-                    <div key={channel.id} className="platform-card">
-                      <div className="platform-card-header">
-                        <span className={`platform-chip tone-${status.tone}`}>{channel.glyph}</span>
-                        <div>
-                          <div className="platform-name">{channel.name}</div>
-                          <div className={`platform-status tone-${status.tone}`}>
-                            <span className="status-mini-dot" />
-                            {status.label}
-                          </div>
-                        </div>
-                      </div>
-                      {status.tone === 'unlisted' && (
-                        <button
-                          className="btn btn-secondary btn-small"
-                          onClick={() => handlePublishToPlatform(channel.name)}
-                        >
-                          Publish
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
               </div>
-            </div>
-          </div>
+
+              <div className="info-section">
+                {isEditing ? (
+                  <>
+                    <div className="form-group">
+                      <label>
+                        Title
+                        {isEdited('title') && <span className="edit-hint"> (edited locally)</span>}
+                      </label>
+                      <input
+                        type="text"
+                        value={editedProduct.title}
+                        onChange={(e) => setEditedProduct({ ...editedProduct, title: e.target.value })}
+                      />
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>
+                          Author
+                          {isEdited('author') && <span className="edit-hint"> (edited locally)</span>}
+                        </label>
+                        <input
+                          type="text"
+                          value={editedProduct.author || ''}
+                          onChange={(e) => setEditedProduct({ ...editedProduct, author: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>ISBN</label>
+                        <input
+                          type="text"
+                          value={editedProduct.isbn || ''}
+                          onChange={(e) => setEditedProduct({ ...editedProduct, isbn: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="form-row form-row-3">
+                      <div className="form-group">
+                        <label>
+                          Price ($)
+                          {isEdited('price') && <span className="edit-hint"> (edited locally)</span>}
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={editedProduct.price}
+                          onChange={(e) => setEditedProduct({ ...editedProduct, price: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Quantity</label>
+                        <input
+                          type="number"
+                          value={editedProduct.quantity}
+                          onChange={(e) => setEditedProduct({ ...editedProduct, quantity: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Condition</label>
+                        <select
+                          value={editedProduct.condition || ''}
+                          onChange={(e) => setEditedProduct({ ...editedProduct, condition: e.target.value })}
+                        >
+                          <option value="">Select…</option>
+                          <option value="new">New</option>
+                          <option value="like_new">Like New</option>
+                          <option value="very_good">Very Good</option>
+                          <option value="good">Good</option>
+                          <option value="acceptable">Acceptable</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label>
+                        Description
+                        {isEdited('description') && <span className="edit-hint"> (edited locally)</span>}
+                      </label>
+                      <DescriptionEditor
+                        value={editedProduct.description || ''}
+                        onChange={(html) => setEditedProduct({ ...editedProduct, description: html })}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="product-title-detail">
+                      {product.title}
+                      {isEdited('title') && <EditedBadge field="title" product={product} onReset={handleUseTruth} />}
+                    </h3>
+                    <div className="info-grid">
+                      <div className="info-item">
+                        <span className="info-label">Author</span>
+                        <span className="info-value">
+                          {product.author || '—'}
+                          {isEdited('author') && <EditedBadge field="author" product={product} onReset={handleUseTruth} />}
+                        </span>
+                      </div>
+                      <div className="info-item">
+                        <span className="info-label">ISBN</span>
+                        <span className="info-value">
+                          <span className="mono">{product.isbn || '—'}</span>
+                        </span>
+                      </div>
+                      <div className="info-item">
+                        <span className="info-label">Price</span>
+                        <span className="info-value price">
+                          ${Number(product.price ?? 0).toFixed(2)}
+                          {isEdited('price') && <EditedBadge field="price" product={product} onReset={handleUseTruth} />}
+                        </span>
+                      </div>
+                      <div className="info-item">
+                        <span className="info-label">Quantity</span>
+                        <span className="info-value">
+                          {product.quantity ?? '—'}
+                          {isEdited('quantity') && <EditedBadge field="quantity" product={product} onReset={handleUseTruth} />}
+                        </span>
+                      </div>
+                      <div className="info-item">
+                        <span className="info-label">Condition</span>
+                        <span className="info-value">
+                          <span className={`condition-badge c-${product.condition || 'none'}`}>
+                            {formatCondition(product.condition)}
+                          </span>
+                          {isEdited('condition') && <EditedBadge field="condition" product={product} onReset={handleUseTruth} />}
+                        </span>
+                      </div>
+                      <div className="info-item">
+                        <span className="info-label">SKU</span>
+                        <span className="info-value">
+                          <span className="mono">{product.sku || '—'}</span>
+                        </span>
+                      </div>
+                      <div className="info-item">
+                        <span className="info-label">Category</span>
+                        <span className="info-value">
+                          {product.metadata?.category || product.metadata?.product_type || '—'}
+                        </span>
+                      </div>
+                      <div className="info-item">
+                        <span className="info-label">Vendor</span>
+                        <span className="info-value">{product.metadata?.vendor || '—'}</span>
+                      </div>
+                      <div className="info-item">
+                        <span className="info-label">Publisher</span>
+                        <span className="info-value">{product.metadata?.publisher || '—'}</span>
+                      </div>
+                      <div className="info-item">
+                        <span className="info-label">Binding</span>
+                        <span className="info-value">{product.metadata?.binding || '—'}</span>
+                      </div>
+                      <div className="info-item">
+                        <span className="info-label">Year</span>
+                        <span className="info-value">{product.metadata?.year || '—'}</span>
+                      </div>
+                    </div>
+                    {Array.isArray(product.metadata?.tags) && product.metadata.tags.length > 0 && (
+                      <div className="tag-chips">
+                        {product.metadata.tags.map((tag) => (
+                          <span key={tag} className="tag-chip">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {(product.description || isEdited('description')) && (
+                      <div className="description-section">
+                        <h4 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          Description
+                          {isEdited('description') && (
+                            <EditedBadge field="description" product={product} onReset={handleUseTruth} />
+                          )}
+                        </h4>
+                        <div
+                          className="description-html"
+                          dangerouslySetInnerHTML={{ __html: renderHtmlDescription(product.description) }}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div className="platform-section">
+                  <h4>Channel listings</h4>
+                  <div className="platform-cards">
+                    {CHANNELS.map((channel) => {
+                      const status = getPlatformStatus(product, channel.id);
+                      return (
+                        <div key={channel.id} className="platform-card">
+                          <div className="platform-card-header">
+                            <span className={`platform-chip tone-${status.tone}`}>{channel.glyph}</span>
+                            <div>
+                              <div className="platform-name">{channel.name}</div>
+                              <div className={`platform-status tone-${status.tone}`}>
+                                <span className="status-mini-dot" />
+                                {status.label}
+                              </div>
+                            </div>
+                          </div>
+                          {status.tone === 'unlisted' && (
+                            <button
+                              className="btn btn-secondary btn-small"
+                              onClick={() => handlePublishToPlatform(channel.name)}
+                            >
+                              Publish
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="modal-footer">
           <div className="footer-left">
-            {!isEditing && (
+            {!isEditing && activeTab === 'details' && (
               <>
                 <button className="btn btn-danger btn-small" onClick={() => onDelete(product.id)}>
                   <TrashIcon size={14} />
@@ -302,26 +598,27 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
             )}
           </div>
           <div className="footer-right">
-            {isEditing ? (
-              <>
-                <button className="btn btn-secondary" onClick={handleCancel}>
-                  Cancel
-                </button>
-                <button className="btn btn-primary" onClick={handleSave}>
-                  Save changes
-                </button>
-              </>
-            ) : (
-              <>
-                <button className="btn btn-secondary" onClick={onClose}>
-                  Close
-                </button>
-                <button className="btn btn-primary" onClick={() => setIsEditing(true)}>
-                  <EditIcon size={14} />
-                  Edit
-                </button>
-              </>
-            )}
+            {activeTab === 'details' &&
+              (isEditing ? (
+                <>
+                  <button className="btn btn-secondary" onClick={handleCancel}>
+                    Cancel
+                  </button>
+                  <button className="btn btn-primary" onClick={handleSave}>
+                    Save changes
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="btn btn-secondary" onClick={onClose}>
+                    Close
+                  </button>
+                  <button className="btn btn-primary" onClick={() => setIsEditing(true)}>
+                    <EditIcon size={14} />
+                    Edit
+                  </button>
+                </>
+              ))}
           </div>
         </div>
       </div>

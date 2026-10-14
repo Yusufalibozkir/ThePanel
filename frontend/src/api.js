@@ -26,6 +26,9 @@ export const productsAPI = {
   update: (id, data) => api.put(`/products/${id}`, data),
   delete: (id) => api.delete(`/products/${id}`),
   markSold: (id, soldVia) => api.post(`/products/${id}/sold`, { sold_via: soldVia }),
+  getChanges: (id, limit) => api.get(`/products/${id}/changes`, { params: { limit } }),
+  deleteChange: (id, changeId) => api.delete(`/products/${id}/changes/${changeId}`),
+  resetLocalEdits: (id) => api.delete(`/products/${id}/local-edits`),
 };
 
 // Sync API

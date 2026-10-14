@@ -26,6 +26,18 @@ testDb.exec(`
     metadata_status TEXT NOT NULL DEFAULT 'missing',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS product_changes (
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    change_id TEXT NOT NULL,
+    product_id TEXT NOT NULL,
+    field TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'sync')),
+    changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
   )
 `);
 

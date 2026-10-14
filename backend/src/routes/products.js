@@ -23,4 +23,9 @@ router.delete('/:id', productController.deleteProduct);
 // Mark sold (single-copy model: closes the book everywhere)
 router.post('/:id/sold', productController.markSold);
 
+// Local change history (overlay edits + sync truth updates)
+router.get('/:id/changes', productController.getChanges);
+router.delete('/:id/changes/:changeId', productController.deleteChange);
+router.delete('/:id/local-edits', productController.resetLocalEdits);
+
 module.exports = router;

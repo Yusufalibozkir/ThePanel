@@ -387,6 +387,331 @@
   min-height: 110px;
 }
 
+/* ---- Tabs ---- */
+.modal-header-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.modal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.modal-tab:hover {
+  background: var(--paper-deep);
+  color: var(--ink);
+}
+
+.modal-tab.active {
+  background: rgba(176, 141, 87, 0.14);
+  color: var(--brass-deep, #8a6d3b);
+}
+
+.history-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(176, 141, 87, 0.2);
+  color: var(--brass-deep, #8a6d3b);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.edit-hint {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--brass-deep, #8a6d3b);
+  font-weight: 600;
+}
+
+/* ---- Edited badge + truth comparison ---- */
+.edited-badge-wrap {
+  position: relative;
+  display: inline-block;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.edited-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(176, 141, 87, 0.35);
+  background: rgba(176, 141, 87, 0.14);
+  color: var(--brass-deep, #8a6d3b);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.15s;
+}
+
+.edited-badge:hover {
+  background: rgba(176, 141, 87, 0.26);
+}
+
+.truth-compare {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 50;
+  width: 520px;
+  max-width: 70vw;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 14px;
+}
+
+.truth-compare-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.truth-compare-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.truth-compare-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.truth-pane {
+  padding: 10px 12px;
+  background: var(--paper-soft);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  min-height: 44px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.truth-pane.local {
+  border-color: rgba(176, 141, 87, 0.35);
+  background: rgba(176, 141, 87, 0.07);
+}
+
+.pane-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.pane-value {
+  font-size: 13.5px;
+  color: var(--ink);
+  font-weight: 500;
+  word-break: break-word;
+}
+
+/* ---- History tab ---- */
+.history-body {
+  grid-column: 1 / -1;
+}
+
+.history-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.history-title {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.history-sub {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  margin-top: 4px;
+  max-width: 560px;
+}
+
+.history-error {
+  padding: 10px 14px;
+  border-radius: 9px;
+  background: var(--clay-soft);
+  color: var(--clay);
+  font-size: 13px;
+}
+
+.history-empty {
+  padding: 30px;
+  text-align: center;
+  color: var(--ink-faint);
+  font-size: 13.5px;
+  background: var(--paper-soft);
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-entry {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper-soft);
+  overflow: hidden;
+}
+
+.history-entry.src-sync {
+  opacity: 0.88;
+}
+
+.history-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.history-source-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+.history-source-badge.src-manual {
+  background: rgba(176, 141, 87, 0.16);
+  color: var(--brass-deep, #8a6d3b);
+  border: 1px solid rgba(176, 141, 87, 0.3);
+}
+
+.history-source-badge.src-sync {
+  background: var(--forest-soft);
+  color: var(--forest);
+  border: 1px solid rgba(74, 124, 89, 0.3);
+}
+
+.history-time {
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.history-delete {
+  margin-left: auto;
+}
+
+.history-fields {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-field-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.history-field-values {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13.5px;
+  flex-wrap: wrap;
+}
+
+.history-field-values .old {
+  color: var(--ink-faint);
+  text-decoration: line-through;
+}
+
+.history-field-values .arrow {
+  color: var(--ink-faint);
+}
+
+.history-field-values .new {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.history-desc-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.history-desc-pane {
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+@media (max-width: 860px) {
+  .truth-compare {
+    left: auto;
+    right: 0;
+  }
+
+  .truth-compare-body,
+  .history-desc-diff {
+    grid-template-columns: 1fr;
+  }
+}
+
 .modal-footer {
   padding: 16px 26px;
   border-top: 1px solid var(--line);

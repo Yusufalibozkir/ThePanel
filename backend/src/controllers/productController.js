@@ -1,5 +1,6 @@
 const productService = require('../services/productService');
 const platformListingService = require('../services/platformListingService');
+const changeLogService = require('../services/changeLogService');
 
 // Distinct filterable values (tags, categories, vendor, ...) with counts
 const getFacets = async (req, res) => {
@@ -109,10 +110,10 @@ const createProduct = async (req, res) => {
   }
 };
 
-// Update product
+// Manual edit: records an overlay entry, never touches the Shopify truth row
 const updateProduct = async (req, res) => {
   try {
-    const product = await productService.update(req.params.id, req.body);
+    const product = await productService.applyEdit(req.params.id, req.body);
 
     if (!product) {
       return res.status(404).json({
@@ -123,7 +124,7 @@ const updateProduct = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Product updated',
+      message: 'Local edit saved (Shopify truth untouched)',
       product,
     });
   } catch (error) {
@@ -133,6 +134,58 @@ const updateProduct = async (req, res) => {
       message: 'Failed to update product',
       error: error.message,
     });
+  }
+};
+
+// Change history for one product (manual overlays + sync truth updates)
+const getChanges = async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const entries = changeLogService.getHistory(req.params.id, limit);
+    res.json({ success: true, count: entries.length, entries });
+  } catch (error) {
+    console.error('Error fetching change history:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch changes', error: error.message });
+  }
+};
+
+// Delete one history entry. For manual entries the edit is peeled back: the
+// affected fields fall to the previous manual value or the Shopify truth value.
+const deleteChange = async (req, res) => {
+  try {
+    const deleted = changeLogService.deleteEntry(req.params.id, req.params.changeId);
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: 'Change entry not found' });
+    }
+    const product = await productService.getById(req.params.id);
+    res.json({
+      success: true,
+      message:
+        deleted.source === 'manual'
+          ? 'Entry deleted — affected fields fell back to their previous value (or the Shopify truth)'
+          : 'Sync record deleted (truth data unaffected)',
+      deleted,
+      product,
+    });
+  } catch (error) {
+    console.error('Error deleting change entry:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete change entry', error: error.message });
+  }
+};
+
+// Reset ALL local edits for a product back to the Shopify truth
+const resetLocalEdits = async (req, res) => {
+  try {
+    const product = await productService.getById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    changeLogService.deleteAllManual(req.params.id);
+    const reset = await productService.getById(req.params.id);
+    res.json({ success: true, message: 'All local edits removed — back to Shopify truth', product: reset });
+  } catch (error) {
+    console.error('Error resetting local edits:', error);
+    res.status(500).json({ success: false, message: 'Failed to reset local edits', error: error.message });
   }
 };
 
@@ -178,4 +231,7 @@ module.exports = {
   updateProduct,
   deleteProduct,
   markSold,
+  getChanges,
+  deleteChange,
+  resetLocalEdits,
 };

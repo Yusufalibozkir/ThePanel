@@ -170,14 +170,29 @@ export default function App() {
 
   const handleProductClick = (product) => setSelectedProduct(product);
 
-  const handleSaveProduct = async (updatedProduct) => {
+  const handleSaveProduct = async (updatedProduct, { keepOpen = false } = {}) => {
     try {
-      await productsAPI.update(updatedProduct.id, updatedProduct);
+      const response = await productsAPI.update(updatedProduct.id, updatedProduct);
       await fetchProducts();
-      setSelectedProduct(null);
-      setSyncMessage('Product updated successfully');
+      if (keepOpen) {
+        setSelectedProduct(response.data.product);
+      } else {
+        setSelectedProduct(null);
+        setSyncMessage('Local edit saved — Shopify truth untouched');
+      }
     } catch (err) {
       setError('Failed to update product: ' + err.message);
+    }
+  };
+
+  // Refresh a product in place (used after history entry deletions / resets)
+  const handleProductRefresh = async (productId) => {
+    await fetchProducts();
+    try {
+      const res = await productsAPI.getById(productId);
+      setSelectedProduct(res.data.product);
+    } catch {
+      setSelectedProduct(null);
     }
   };
 
@@ -498,7 +513,17 @@ export default function App() {
                                   </div>
                                 )}
                               </td>
-                              <td className="product-title">{product.title}</td>
+                              <td className="product-title">
+                                {product.title}
+                                {(product.local_edits || []).length > 0 && (
+                                  <span
+                                    className="edited-dot"
+                                    title={`Locally edited: ${product.local_edits.join(', ')} (Shopify truth untouched)`}
+                                  >
+                                    ✎
+                                  </span>
+                                )}
+                              </td>
                               <td>{product.author || '—'}</td>
                               <td>
                                 {product.isbn ? <span className="mono">{product.isbn}</span> : '—'}
@@ -596,6 +621,7 @@ export default function App() {
               onSave={handleSaveProduct}
               onDelete={handleDeleteProduct}
               onDuplicate={handleDuplicateProduct}
+              onProductUpdated={() => handleProductRefresh(selectedProduct.id)}
             />
           )}
         </div>
