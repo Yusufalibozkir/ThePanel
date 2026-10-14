@@ -1,55 +1,45 @@
 const shopifyService = require('../services/shopifyService');
 const productService = require('../services/productService');
 const syncLogService = require('../services/syncLogService');
+const jobService = require('../services/jobService');
 
-// Sync products from Shopify to database
+// Sync products from Shopify (GraphQL) into the database.
+// Response shape kept stable for the frontend:
+//   { success, message, results: { created, updated, errors, enriched } }
 const syncFromShopify = async (req, res) => {
   try {
-    const limit = req.query.limit || 250;
-    
-    // Fetch products from Shopify
+    const limit = Math.min(parseInt(req.query.limit, 10) || 250, 250);
+
     const shopifyResult = await shopifyService.getProducts(limit);
-    
     if (!shopifyResult.success) {
-      return res.status(500).json({
+      await syncLogService.createLog({
+        platform: 'shopify',
+        action: 'sync',
+        status: 'failed',
+        error_message: shopifyResult.message,
+      });
+      return res.status(502).json({
         success: false,
         message: 'Failed to fetch products from Shopify',
         error: shopifyResult.message,
       });
     }
 
-    // Sync products to database
     const syncResults = await productService.syncProductsFromShopify(shopifyResult.products);
 
-    // Log the sync operation
-    for (let i = 0; i < syncResults.created; i++) {
-      await syncLogService.createLog({
-        platform: 'ebay',
-        action: 'create',
-        status: 'success',
-        details: { source: 'shopify_sync' },
-      });
-    }
-
-    for (let i = 0; i < syncResults.updated; i++) {
-      await syncLogService.createLog({
-        platform: 'ebay',
-        action: 'update',
-        status: 'success',
-        details: { source: 'shopify_sync' },
-      });
-    }
-
-    // Log errors
-    for (const error of syncResults.errors) {
-      await syncLogService.createLog({
-        platform: 'ebay',
-        action: 'create',
-        status: 'failed',
-        error_message: error.error,
-        details: { shopify_product_id: error.shopifyId },
-      });
-    }
+    await syncLogService.createLog({
+      platform: 'shopify',
+      action: 'sync',
+      status: syncResults.errors.length > 0 ? 'failed' : 'success',
+      details: {
+        created: syncResults.created,
+        updated: syncResults.updated,
+        enriched: syncResults.enriched,
+        error_count: syncResults.errors.length,
+        errors: syncResults.errors.slice(0, 20),
+      },
+      error_message: syncResults.errors[0]?.error || null,
+    });
 
     res.json({
       success: true,
@@ -58,46 +48,36 @@ const syncFromShopify = async (req, res) => {
         created: syncResults.created,
         updated: syncResults.updated,
         errors: syncResults.errors.length,
+        enriched: syncResults.enriched,
         products: [],
       },
     });
-
   } catch (error) {
     console.error('Sync error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Sync failed',
-      error: error.message,
-    });
+    res.status(500).json({ success: false, message: 'Sync failed', error: error.message });
   }
 };
 
-// Get sync logs
+// Queue a sync job instead of running inline
+const queueSync = async (req, res) => {
+  try {
+    const job = jobService.enqueue('sync_shopify', {});
+    res.status(202).json({ success: true, message: 'Sync queued', jobId: job.id });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to queue sync', error: error.message });
+  }
+};
+
 const getSyncLogs = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 100;
+    const limit = parseInt(req.query.limit, 10) || 100;
     const errorsOnly = req.query.errors === 'true';
-    
-    const logs = errorsOnly 
-      ? await syncLogService.getErrorLogs(limit)
-      : await syncLogService.getRecentLogs(limit);
-
-    res.json({
-      success: true,
-      count: logs.length,
-      logs,
-    });
+    const logs = errorsOnly ? syncLogService.getErrorLogs(limit) : syncLogService.getRecentLogs(limit);
+    res.json({ success: true, count: logs.length, logs });
   } catch (error) {
     console.error('Error fetching logs:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch sync logs',
-      error: error.message,
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch sync logs', error: error.message });
   }
 };
 
-module.exports = {
-  syncFromShopify,
-  getSyncLogs,
-};
+module.exports = { syncFromShopify, queueSync, getSyncLogs };

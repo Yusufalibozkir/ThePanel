@@ -21,13 +21,25 @@ app.get('/health', (req, res) => {
 const shopifyRoutes = require('./routes/shopify');
 const productRoutes = require('./routes/products');
 const syncRoutes = require('./routes/sync');
+const settingsRoutes = require('./routes/settings');
+const rulesRoutes = require('./routes/rules');
+const jobsRoutes = require('./routes/jobs');
 
 // Use routes
 app.use('/api/shopify', shopifyRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/sync', syncRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/rules', rulesRoutes);
+app.use('/api/jobs', jobsRoutes);
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+// Durable job runner (retries + backoff)
+const jobRunner = require('./jobs/runner');
+require('./jobs/handlers');
+jobRunner.start();
+
+// Start server (localhost-only)
+const HOST = process.env.HOST || '127.0.0.1';
+app.listen(PORT, HOST, () => {
+  console.log(`Server is running on http://${HOST}:${PORT}`);
 });

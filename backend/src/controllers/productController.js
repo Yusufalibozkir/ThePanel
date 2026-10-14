@@ -7,8 +7,10 @@ const getAllProducts = async (req, res) => {
     const filters = {
       isbn: req.query.isbn,
       condition: req.query.condition,
+      metadataStatus: req.query.metadataStatus,
       minPrice: req.query.minPrice,
       maxPrice: req.query.maxPrice,
+      sold: req.query.sold,
     };
 
     const products = await productService.getAll(filters);
@@ -139,10 +141,26 @@ const deleteProduct = async (req, res) => {
   }
 };
 
+// Mark product sold via a platform (or shopify). Single-copy model.
+const markSold = async (req, res) => {
+  try {
+    const soldVia = req.body?.sold_via || 'manual';
+    const product = await productService.markSold(req.params.id, soldVia);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    // Phase 3: queue end_listing jobs for other active listings here (W3)
+    res.json({ success: true, message: 'Product marked sold', product });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getAllProducts,
   getProductById,
   createProduct,
   updateProduct,
   deleteProduct,
+  markSold,
 };

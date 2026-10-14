@@ -17,4 +17,7 @@ router.put('/:id', productController.updateProduct);
 // Delete product
 router.delete('/:id', productController.deleteProduct);
 
+// Mark sold (single-copy model: closes the book everywhere)
+router.post('/:id/sold', productController.markSold);
+
 module.exports = router;

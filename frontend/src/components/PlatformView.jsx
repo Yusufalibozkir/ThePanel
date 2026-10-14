@@ -233,8 +233,8 @@ export default function PlatformView({ platform, products, onProductClick }) {
                         <td>{product.isbn ? <span className="mono">{product.isbn}</span> : '—'}</td>
                         <td className="price">${parseFloat(product.price).toFixed(2)}</td>
                         <td className="price">
-                          {listing?.platform_price
-                            ? `$${parseFloat(listing.platform_price).toFixed(2)}`
+                          {listing?.external_price
+                            ? `$${parseFloat(listing.external_price).toFixed(2)}`
                             : '—'}
                         </td>
                         <td>

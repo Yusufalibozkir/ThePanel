@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
-import { productsAPI, syncAPI } from './api';
+import { productsAPI, syncAPI, shopifyAPI } from './api';
 import ProductModal from './components/ProductModal';
 import PlatformView from './components/PlatformView';
+import SettingsView from './components/SettingsView';
+import MetadataReview from './components/MetadataReview';
 import { PLATFORMS } from './platforms';
 import { getPageNumbers } from './pagination';
 import {
@@ -17,8 +19,14 @@ import {
 import './App.css';
 
 const CHANNEL_IDS = ['ebay', 'abebooks', 'etsy'];
-const GLYPHS = { overview: 'S', ebay: 'e', abebooks: 'A', etsy: 'E' };
+const GLYPHS = { overview: 'S', ebay: 'e', abebooks: 'A', etsy: 'E', metadata: 'M', settings: '⚙' };
 const PLATFORM_NAMES = { ebay: 'eBay', abebooks: 'AbeBooks', etsy: 'Etsy' };
+const META_STATUS = {
+  ok: { label: 'OK', cls: 'ok' },
+  partial: { label: 'Partial', cls: 'partial' },
+  unverified: { label: 'Unverified', cls: 'unverified' },
+  missing: { label: 'Missing', cls: 'missing' },
+};
 
 function listingStatus(listings, platform) {
   const listing = listings?.find((l) => l.platform === platform);
@@ -40,6 +48,7 @@ export default function App() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCondition, setFilterCondition] = useState('all');
+  const [filterMetaStatus, setFilterMetaStatus] = useState('all');
   const [activeTab, setActiveTab] = useState('overview');
 
   const fetchProducts = async () => {
@@ -62,8 +71,11 @@ export default function App() {
     setError(null);
     try {
       const response = await syncAPI.syncFromShopify(250);
+      const r = response.data.results;
       setSyncMessage(
-        `Sync completed — ${response.data.results.created} created, ${response.data.results.updated} updated, ${response.data.results.errors} errors`
+        `Sync completed — ${r.created} created, ${r.updated} updated, ${r.errors} errors${
+          r.enriched ? `, ${r.enriched} enriched via OpenLibrary` : ''
+        }`
       );
       await fetchProducts();
     } catch (err) {
@@ -100,8 +112,12 @@ export default function App() {
       filtered = filtered.filter((p) => p.condition === filterCondition);
     }
 
+    if (filterMetaStatus !== 'all') {
+      filtered = filtered.filter((p) => (p.metadata_status || 'missing') === filterMetaStatus);
+    }
+
     return filtered;
-  }, [products, searchTerm, filterCondition]);
+  }, [products, searchTerm, filterCondition, filterMetaStatus]);
 
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -110,7 +126,17 @@ export default function App() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filterCondition, activeTab]);
+  }, [searchTerm, filterCondition, filterMetaStatus, activeTab]);
+
+  const testShopify = async () => {
+    try {
+      const res = await shopifyAPI.testConnection();
+      if (!res.data.success) throw new Error(res.data.message);
+      return res.data;
+    } catch (err) {
+      throw new Error(err.response?.data?.message || err.message);
+    }
+  };
 
   const handleProductClick = (product) => setSelectedProduct(product);
 
@@ -197,6 +223,30 @@ export default function App() {
               <span className={`nav-dot ${PLATFORMS[id].connected ? 'on' : ''}`} />
             </button>
           ))}
+
+          <div className="nav-section">Panel</div>
+          <button
+            className={`nav-item ${activeTab === 'metadata' ? 'active' : ''}`}
+            onClick={() => setActiveTab('metadata')}
+          >
+            <span className="nav-glyph">{GLYPHS.metadata}</span>
+            <span className="nav-label">
+              <span className="nav-name">Metadata review</span>
+              <span className="nav-desc">
+                {products.filter((p) => ['unverified', 'missing'].includes(p.metadata_status)).length} need attention
+              </span>
+            </span>
+          </button>
+          <button
+            className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
+            onClick={() => setActiveTab('settings')}
+          >
+            <span className="nav-glyph">{GLYPHS.settings}</span>
+            <span className="nav-label">
+              <span className="nav-name">Settings</span>
+              <span className="nav-desc">Credentials &amp; rules</span>
+            </span>
+          </button>
         </nav>
 
         <div className="sidebar-footer">
@@ -229,7 +279,11 @@ export default function App() {
             </div>
           )}
 
-          {activeTab !== 'overview' ? (
+          {activeTab === 'settings' ? (
+            <SettingsView onShopifyTest={testShopify} />
+          ) : activeTab === 'metadata' ? (
+            <MetadataReview onChanged={fetchProducts} />
+          ) : activeTab !== 'overview' ? (
             <PlatformView
               platform={activePlatform}
               products={products}
@@ -302,6 +356,17 @@ export default function App() {
                       <option value="acceptable">Acceptable</option>
                     </select>
                     <select
+                      value={filterMetaStatus}
+                      onChange={(e) => setFilterMetaStatus(e.target.value)}
+                      className="select"
+                    >
+                      <option value="all">All metadata</option>
+                      <option value="ok">Metadata: OK</option>
+                      <option value="partial">Metadata: Partial</option>
+                      <option value="unverified">Metadata: Unverified</option>
+                      <option value="missing">Metadata: Missing</option>
+                    </select>
+                    <select
                       value={itemsPerPage}
                       onChange={(e) => setItemsPerPage(Number(e.target.value))}
                       className="select"
@@ -346,6 +411,7 @@ export default function App() {
                             <th>Price</th>
                             <th>Qty</th>
                             <th>Condition</th>
+                            <th>Meta</th>
                             <th>Channels</th>
                           </tr>
                         </thead>
@@ -376,6 +442,16 @@ export default function App() {
                                 <span className={`condition-badge c-${product.condition || 'none'}`}>
                                   {product.condition ? product.condition.replace('_', ' ') : '—'}
                                 </span>
+                              </td>
+                              <td>
+                                {(() => {
+                                  const meta = META_STATUS[product.metadata_status] || META_STATUS.missing;
+                                  return (
+                                    <span className={`meta-status-badge ms-${meta.cls}`} title={`Metadata ${meta.cls}`}>
+                                      {meta.label}
+                                    </span>
+                                  );
+                                })()}
                               </td>
                               <td>
                                 <div className="chip-row">

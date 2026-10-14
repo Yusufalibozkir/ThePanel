@@ -10,24 +10,24 @@ if (!fs.existsSync(dbDir)) {
 
 const dbPath = path.join(dbDir, 'thepanel.db');
 
-// Initialize SQLite database
-const db = new Database(dbPath, { verbose: console.log });
+// SQL logging only in development
+const verbose = process.env.NODE_ENV === 'development' ? console.log : undefined;
+const db = new Database(dbPath, verbose ? { verbose } : {});
 
 // Enable foreign keys
 db.pragma('foreign_keys = ON');
 
 console.log(`Connected to SQLite database at ${dbPath}`);
 
-// Helper function to run queries
+// Helper for SELECT-style calls kept from v1; prefer prepare()/RETURNING in new code.
 const query = (sql, params = []) => {
   try {
     const stmt = db.prepare(sql);
-    if (sql.trim().toUpperCase().startsWith('SELECT')) {
+    if (stmt.reader) {
       return { rows: stmt.all(params) };
-    } else {
-      const info = stmt.run(params);
-      return { rows: [{ id: info.lastInsertRowid, changes: info.changes }] };
     }
+    const info = stmt.run(params);
+    return { rows: [{ id: info.lastInsertRowid, changes: info.changes }] };
   } catch (error) {
     console.error('Database query error:', error);
     throw error;
