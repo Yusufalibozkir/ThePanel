@@ -3,29 +3,45 @@ import { productsAPI, syncAPI } from './api';
 import ProductModal from './components/ProductModal';
 import PlatformView from './components/PlatformView';
 import { PLATFORMS } from './platforms';
+import { getPageNumbers } from './pagination';
+import {
+  SearchIcon,
+  SyncIcon,
+  CloseIcon,
+  BookIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  AlertIcon,
+  CheckIcon,
+} from './components/icons';
 import './App.css';
-import './components/PlatformView.css';
 
-function App() {
+const CHANNEL_IDS = ['ebay', 'abebooks', 'etsy'];
+const GLYPHS = { overview: 'S', ebay: 'e', abebooks: 'A', etsy: 'E' };
+const PLATFORM_NAMES = { ebay: 'eBay', abebooks: 'AbeBooks', etsy: 'Etsy' };
+
+function listingStatus(listings, platform) {
+  const listing = listings?.find((l) => l.platform === platform);
+  if (!listing) return 'unlisted';
+  return listing.status;
+}
+
+export default function App() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
   const [syncMessage, setSyncMessage] = useState(null);
-  
-  // Modal state
+
   const [selectedProduct, setSelectedProduct] = useState(null);
-  
-  // Pagination state
+
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
-  
-  // Search and filter state
+
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCondition, setFilterCondition] = useState('all');
   const [activeTab, setActiveTab] = useState('overview');
 
-  // Fetch products from database
   const fetchProducts = async () => {
     setLoading(true);
     setError(null);
@@ -40,7 +56,6 @@ function App() {
     }
   };
 
-  // Sync products from Shopify
   const handleSync = async () => {
     setSyncing(true);
     setSyncMessage(null);
@@ -48,9 +63,8 @@ function App() {
     try {
       const response = await syncAPI.syncFromShopify(250);
       setSyncMessage(
-        `Sync completed: ${response.data.results.created} created, ${response.data.results.updated} updated, ${response.data.results.errors} errors`
+        `Sync completed — ${response.data.results.created} created, ${response.data.results.updated} updated, ${response.data.results.errors} errors`
       );
-      // Refresh products list
       await fetchProducts();
     } catch (err) {
       setError('Sync failed: ' + err.message);
@@ -60,47 +74,45 @@ function App() {
     }
   };
 
-  // Load products on mount
   useEffect(() => {
     fetchProducts();
   }, []);
 
-  // Filter and search products
+  useEffect(() => {
+    if (!syncMessage) return;
+    const t = setTimeout(() => setSyncMessage(null), 5000);
+    return () => clearTimeout(t);
+  }, [syncMessage]);
+
   const filteredProducts = useMemo(() => {
     let filtered = products;
 
-    // Apply search
     if (searchTerm) {
-      filtered = filtered.filter(p => 
-        p.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.author?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.isbn?.includes(searchTerm)
+      filtered = filtered.filter(
+        (p) =>
+          p.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          p.author?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          p.isbn?.includes(searchTerm)
       );
     }
 
-    // Apply condition filter
     if (filterCondition !== 'all') {
-      filtered = filtered.filter(p => p.condition === filterCondition);
+      filtered = filtered.filter((p) => p.condition === filterCondition);
     }
 
     return filtered;
   }, [products, searchTerm, filterCondition]);
 
-  // Pagination
-  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
   const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
 
-  // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, filterCondition, activeTab]);
 
-  // Handle product actions
-  const handleProductClick = (product) => {
-    setSelectedProduct(product);
-  };
+  const handleProductClick = (product) => setSelectedProduct(product);
 
   const handleSaveProduct = async (updatedProduct) => {
     try {
@@ -115,7 +127,6 @@ function App() {
 
   const handleDeleteProduct = async (productId) => {
     if (!confirm('Are you sure you want to delete this product?')) return;
-    
     try {
       await productsAPI.delete(productId);
       await fetchProducts();
@@ -143,254 +154,309 @@ function App() {
     }
   };
 
-  // Get platform status icon
-  const getPlatformIcon = (listings, platform) => {
-    const listing = listings.find(l => l.platform === platform);
-    if (!listing) return '⚪';
-    if (listing.status === 'active') return '✅';
-    if (listing.status === 'error') return '⚠️';
-    if (listing.status === 'draft') return '📝';
-    return '⚪';
-  };
+  const activePlatform = PLATFORMS[activeTab];
 
   return (
     <div className="app">
-      <header className="header">
-        <div className="header-content">
-          <h1>ThePanel</h1>
-          <p className="header-subtitle">Book Inventory Manager</p>
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">
+            <span className="brand-glyph">P</span>
+            <span className="brand-name">ThePanel</span>
+          </div>
+          <div className="brand-sub">Book Inventory</div>
         </div>
-        <div className="header-actions">
-          <button 
-            onClick={handleSync} 
-            disabled={syncing}
-            className="btn btn-primary"
-          >
-            {syncing ? 'Syncing...' : 'Sync from Shopify'}
-          </button>
-        </div>
-      </header>
 
-      {error && (
-        <div className="alert alert-error">
-          {error}
-        </div>
-      )}
-
-      {syncMessage && (
-        <div className="alert alert-success">
-          {syncMessage}
-        </div>
-      )}
-
-      <nav className="platform-tabs">
-        {Object.values(PLATFORMS).map((platform) => (
+        <nav className="nav">
+          <div className="nav-section">Catalog</div>
           <button
-            key={platform.id}
-            className={`platform-tab ${activeTab === platform.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(platform.id)}
+            className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`}
+            onClick={() => setActiveTab('overview')}
           >
-            {platform.name}
+            <span className="nav-glyph">{GLYPHS.overview}</span>
+            <span className="nav-label">
+              <span className="nav-name">{PLATFORMS.overview.name}</span>
+              <span className="nav-desc">{PLATFORMS.overview.description}</span>
+            </span>
           </button>
-        ))}
-      </nav>
 
-      {activeTab !== 'overview' ? (
-        <PlatformView
-          platform={PLATFORMS[activeTab]}
-          products={products}
-          onProductClick={handleProductClick}
-        />
-      ) : (
-      <>
-      <div className="stats">
-        <div className="stat-card">
-          <div className="stat-label">Total Products</div>
-          <div className="stat-number">{products.length}</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">eBay Listings</div>
-          <div className="stat-number">
-            {products.filter(p => p.platform_listings?.some(l => l.platform === 'ebay' && l.status === 'active')).length}
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">AbeBooks Listings</div>
-          <div className="stat-number">
-            {products.filter(p => p.platform_listings?.some(l => l.platform === 'abebooks' && l.status === 'active')).length}
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Etsy Listings</div>
-          <div className="stat-number">
-            {products.filter(p => p.platform_listings?.some(l => l.platform === 'etsy' && l.status === 'active')).length}
-          </div>
-        </div>
-      </div>
-
-      <div className="products-container">
-        <div className="products-header">
-          <h2>Products</h2>
-          <div className="products-controls">
-            <div className="search-box">
-              <input
-                type="text"
-                placeholder="Search by title, author, or ISBN..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="search-input"
-              />
-            </div>
-            <select
-              value={filterCondition}
-              onChange={(e) => setFilterCondition(e.target.value)}
-              className="filter-select"
+          <div className="nav-section">Channels</div>
+          {CHANNEL_IDS.map((id) => (
+            <button
+              key={id}
+              className={`nav-item ${activeTab === id ? 'active' : ''}`}
+              onClick={() => setActiveTab(id)}
             >
-              <option value="all">All Conditions</option>
-              <option value="new">New</option>
-              <option value="like_new">Like New</option>
-              <option value="very_good">Very Good</option>
-              <option value="good">Good</option>
-              <option value="acceptable">Acceptable</option>
-            </select>
-            <select
-              value={itemsPerPage}
-              onChange={(e) => setItemsPerPage(Number(e.target.value))}
-              className="per-page-select"
-            >
-              <option value="10">10 per page</option>
-              <option value="25">25 per page</option>
-              <option value="50">50 per page</option>
-              <option value="100">100 per page</option>
-            </select>
-          </div>
-        </div>
-        
-        {loading ? (
-          <div className="loading">Loading products...</div>
-        ) : filteredProducts.length === 0 ? (
-          <div className="empty-state">
-            {products.length === 0 ? (
-              <p>No products found. Click "Sync from Shopify" to import products.</p>
-            ) : (
-              <p>No products match your search criteria.</p>
-            )}
-          </div>
-        ) : (
-          <>
-            <div className="products-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Image</th>
-                    <th>Title</th>
-                    <th>Author</th>
-                    <th>ISBN</th>
-                    <th>Price</th>
-                    <th>Qty</th>
-                    <th>Condition</th>
-                    <th>Platforms</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedProducts.map((product) => (
-                    <tr key={product.id} onClick={() => handleProductClick(product)} style={{ cursor: 'pointer' }}>
-                      <td>
-                        {product.images && product.images.length > 0 ? (
-                          <img 
-                            src={product.images[0]} 
-                            alt={product.title}
-                            className="product-thumbnail"
-                          />
-                        ) : (
-                          <div className="no-image">📖</div>
-                        )}
-                      </td>
-                      <td className="product-title">{product.title}</td>
-                      <td>{product.author || '-'}</td>
-                      <td><code>{product.isbn || '-'}</code></td>
-                      <td className="price">${parseFloat(product.price).toFixed(2)}</td>
-                      <td className="quantity">{product.quantity}</td>
-                      <td>
-                        <span className="condition-badge">
-                          {product.condition ? product.condition.replace('_', ' ') : '-'}
-                        </span>
-                      </td>
-                      <td className="platforms">
-                        <div className="platform-icons">
-                          <span className="platform-icon" title="eBay">
-                            {getPlatformIcon(product.platform_listings || [], 'ebay')}
-                          </span>
-                          <span className="platform-icon" title="AbeBooks">
-                            {getPlatformIcon(product.platform_listings || [], 'abebooks')}
-                          </span>
-                          <span className="platform-icon" title="Etsy">
-                            {getPlatformIcon(product.platform_listings || [], 'etsy')}
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="pagination">
-              <div className="pagination-info">
-                Showing {startIndex + 1}-{Math.min(endIndex, filteredProducts.length)} of {filteredProducts.length} products
-              </div>
-              <div className="pagination-controls">
-                <button
-                  onClick={() => setCurrentPage(1)}
-                  disabled={currentPage === 1}
-                  className="btn btn-pagination"
-                >
-                  First
-                </button>
-                <button
-                  onClick={() => setCurrentPage(p => p - 1)}
-                  disabled={currentPage === 1}
-                  className="btn btn-pagination"
-                >
-                  Previous
-                </button>
-                <span className="page-indicator">
-                  Page {currentPage} of {totalPages}
+              <span className="nav-glyph">{GLYPHS[id]}</span>
+              <span className="nav-label">
+                <span className="nav-name">{PLATFORM_NAMES[id]}</span>
+                <span className="nav-desc">
+                  {PLATFORMS[id].connected ? 'Connected' : 'Not connected'}
                 </span>
-                <button
-                  onClick={() => setCurrentPage(p => p + 1)}
-                  disabled={currentPage === totalPages}
-                  className="btn btn-pagination"
-                >
-                  Next
-                </button>
-                <button
-                  onClick={() => setCurrentPage(totalPages)}
-                  disabled={currentPage === totalPages}
-                  className="btn btn-pagination"
-                >
-                  Last
-                </button>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-      </>
-      )}
+              </span>
+              <span className={`nav-dot ${PLATFORMS[id].connected ? 'on' : ''}`} />
+            </button>
+          ))}
+        </nav>
 
-      {/* Product Modal */}
-      {selectedProduct && (
-        <ProductModal
-          product={selectedProduct}
-          onClose={() => setSelectedProduct(null)}
-          onSave={handleSaveProduct}
-          onDelete={handleDeleteProduct}
-          onDuplicate={handleDuplicateProduct}
-        />
-      )}
+        <div className="sidebar-footer">
+          <button onClick={handleSync} disabled={syncing} className="btn btn-primary btn-block">
+            {syncing ? <span className="spinner" /> : <SyncIcon size={15} />}
+            {syncing ? 'Syncing…' : 'Sync from Shopify'}
+          </button>
+        </div>
+      </aside>
+
+      <main className="main">
+        <div className="main-inner">
+          {error && (
+            <div className="alert alert-error" role="alert">
+              <AlertIcon size={17} />
+              <div className="alert-msg">{error}</div>
+              <button className="alert-close" onClick={() => setError(null)} aria-label="Dismiss">
+                <CloseIcon size={13} />
+              </button>
+            </div>
+          )}
+
+          {syncMessage && (
+            <div className="alert alert-success" role="status">
+              <CheckIcon size={17} />
+              <div className="alert-msg">{syncMessage}</div>
+              <button className="alert-close" onClick={() => setSyncMessage(null)} aria-label="Dismiss">
+                <CloseIcon size={13} />
+              </button>
+            </div>
+          )}
+
+          {activeTab !== 'overview' ? (
+            <PlatformView
+              platform={activePlatform}
+              products={products}
+              onProductClick={handleProductClick}
+            />
+          ) : (
+            <>
+              <div className="page-head">
+                <div>
+                  <h1 className="page-title">Overview</h1>
+                  <p className="page-desc">{PLATFORMS.overview.description}</p>
+                </div>
+              </div>
+
+              <div className="stats">
+                <div className="stat-card">
+                  <div className="stat-label">
+                    <span className="stat-dot" />
+                    Total products
+                  </div>
+                  <div className="stat-number">{products.length}</div>
+                </div>
+                {CHANNEL_IDS.map((id) => (
+                  <div className="stat-card" key={id}>
+                    <div className="stat-label">
+                      <span className="stat-dot tone-forest" />
+                      {PLATFORM_NAMES[id]} listings
+                    </div>
+                    <div className="stat-number">
+                      {
+                        products.filter(
+                          (p) =>
+                            p.platform_listings?.some(
+                              (l) => l.platform === id && l.status === 'active'
+                            )
+                        ).length
+                      }
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="panel">
+                <div className="panel-head">
+                  <h2>
+                    Products
+                    <span className="count-chip">{filteredProducts.length}</span>
+                  </h2>
+                  <div className="panel-tools">
+                    <div className="search">
+                      <SearchIcon size={15} />
+                      <input
+                        type="text"
+                        placeholder="Search title, author, or ISBN…"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="search-input"
+                      />
+                    </div>
+                    <select
+                      value={filterCondition}
+                      onChange={(e) => setFilterCondition(e.target.value)}
+                      className="select"
+                    >
+                      <option value="all">All conditions</option>
+                      <option value="new">New</option>
+                      <option value="like_new">Like New</option>
+                      <option value="very_good">Very Good</option>
+                      <option value="good">Good</option>
+                      <option value="acceptable">Acceptable</option>
+                    </select>
+                    <select
+                      value={itemsPerPage}
+                      onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                      className="select"
+                    >
+                      <option value={10}>10 / page</option>
+                      <option value={25}>25 / page</option>
+                      <option value={50}>50 / page</option>
+                      <option value={100}>100 / page</option>
+                    </select>
+                  </div>
+                </div>
+
+                {loading ? (
+                  <div className="loading">
+                    <span className="spinner" style={{ borderTopColor: 'var(--brass)' }} />
+                    Loading products…
+                  </div>
+                ) : filteredProducts.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-icon">
+                      <BookIcon size={26} />
+                    </div>
+                    <div className="empty-title">
+                      {products.length === 0 ? 'No products yet' : 'No matches found'}
+                    </div>
+                    <div className="empty-hint">
+                      {products.length === 0
+                        ? 'Use "Sync from Shopify" in the sidebar to import your catalog.'
+                        : 'Try a different search or filter.'}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th />
+                            <th>Title</th>
+                            <th>Author</th>
+                            <th>ISBN</th>
+                            <th>Price</th>
+                            <th>Qty</th>
+                            <th>Condition</th>
+                            <th>Channels</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {paginatedProducts.map((product) => (
+                            <tr key={product.id} onClick={() => handleProductClick(product)}>
+                              <td className="thumb-cell">
+                                {product.images && product.images.length > 0 ? (
+                                  <img
+                                    src={product.images[0]}
+                                    alt={product.title}
+                                    className="product-thumbnail"
+                                  />
+                                ) : (
+                                  <div className="no-image">
+                                    <BookIcon size={20} />
+                                  </div>
+                                )}
+                              </td>
+                              <td className="product-title">{product.title}</td>
+                              <td>{product.author || '—'}</td>
+                              <td>
+                                {product.isbn ? <span className="mono">{product.isbn}</span> : '—'}
+                              </td>
+                              <td className="price">${parseFloat(product.price).toFixed(2)}</td>
+                              <td className="quantity">{product.quantity}</td>
+                              <td>
+                                <span className={`condition-badge c-${product.condition || 'none'}`}>
+                                  {product.condition ? product.condition.replace('_', ' ') : '—'}
+                                </span>
+                              </td>
+                              <td>
+                                <div className="chip-row">
+                                  {CHANNEL_IDS.map((id) => {
+                                    const status = listingStatus(product.platform_listings, id);
+                                    return (
+                                      <span
+                                        key={id}
+                                        className={`chip tone-${status}`}
+                                        title={`${PLATFORM_NAMES[id]} — ${
+                                          status.charAt(0).toUpperCase() + status.slice(1)
+                                        }`}
+                                      >
+                                        {GLYPHS[id]}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="pagination">
+                      <div className="pagination-info">
+                        Showing {startIndex + 1}–{Math.min(endIndex, filteredProducts.length)} of{' '}
+                        {filteredProducts.length} products
+                      </div>
+                      <div className="pagination-controls">
+                        <button
+                          className="page-btn"
+                          onClick={() => setCurrentPage((p) => p - 1)}
+                          disabled={currentPage === 1}
+                          aria-label="Previous page"
+                        >
+                          <ChevronLeftIcon size={15} />
+                        </button>
+                        {getPageNumbers(currentPage, totalPages).map((p, i) =>
+                          typeof p === 'number' ? (
+                            <button
+                              key={i}
+                              className={`page-btn ${p === currentPage ? 'active' : ''}`}
+                              onClick={() => setCurrentPage(p)}
+                            >
+                              {p}
+                            </button>
+                          ) : (
+                            <span key={i} className="page-ellipsis">
+                              …
+                            </span>
+                          )
+                        )}
+                        <button
+                          className="page-btn"
+                          onClick={() => setCurrentPage((p) => p + 1)}
+                          disabled={currentPage === totalPages}
+                          aria-label="Next page"
+                        >
+                          <ChevronRightIcon size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+
+          {selectedProduct && (
+            <ProductModal
+              product={selectedProduct}
+              onClose={() => setSelectedProduct(null)}
+              onSave={handleSaveProduct}
+              onDelete={handleDeleteProduct}
+              onDuplicate={handleDuplicateProduct}
+            />
+          )}
+        </div>
+      </main>
     </div>
   );
 }
-
-export default App;

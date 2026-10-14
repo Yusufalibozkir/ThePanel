@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getListing, getListingStatus } from '../platforms';
+import { getPageNumbers } from '../pagination';
+import {
+  SearchIcon,
+  BookIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  InfoIcon,
+} from './icons';
 import './PlatformView.css';
 
-function PlatformView({ platform, products, onProductClick }) {
+export default function PlatformView({ platform, products, onProductClick }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
@@ -67,71 +75,92 @@ function PlatformView({ platform, products, onProductClick }) {
 
   return (
     <div className="platform-view">
-      <div className="platform-hero">
+      <div className="page-head">
         <div>
-          <h2>{platform.name}</h2>
-          <p>{platform.description}</p>
+          <h1 className="page-title">{platform.name}</h1>
+          <p className="page-desc">{platform.description}</p>
         </div>
-        <div className={`connection-badge ${platform.connected ? 'connected' : 'disconnected'}`}>
+        <span className={`connection-badge ${platform.connected ? 'connected' : 'disconnected'}`}>
+          <span className="connection-dot" />
           {platform.connected ? 'Connected' : 'Not connected'}
-        </div>
+        </span>
       </div>
 
       {!platform.connected && (
-        <div className="platform-banner">
-          API credentials are not set yet. You can review inventory here; listing, update, and delist actions will unlock after connecting {platform.name}.
+        <div className="alert alert-info">
+          <InfoIcon size={17} />
+          <div className="alert-msg">
+            API credentials are not set yet. You can review inventory here — listing, update, and
+            delist actions unlock after connecting {platform.name}.
+          </div>
         </div>
       )}
 
-      <div className="stats platform-stats">
+      <div className="stats">
         <div className="stat-card">
-          <div className="stat-label">Listed</div>
+          <div className="stat-label">
+            <span className="stat-dot tone-forest" />
+            Listed
+          </div>
           <div className="stat-number">{stats.listed}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Not listed</div>
+          <div className="stat-label">
+            <span className="stat-dot" />
+            Not listed
+          </div>
           <div className="stat-number">{stats.unlisted}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Drafts</div>
+          <div className="stat-label">
+            <span className="stat-dot tone-amber" />
+            Drafts
+          </div>
           <div className="stat-number">{stats.drafts}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Errors</div>
+          <div className="stat-label">
+            <span className="stat-dot tone-clay" />
+            Errors
+          </div>
           <div className="stat-number">{stats.errors}</div>
         </div>
       </div>
 
       <div className="rules-card">
-        <h3>Sync rules</h3>
+        <h3 className="rules-title">Sync rules</h3>
         <div className="rules-grid">
-          <div>
+          <div className="rule-cell">
             <span className="info-label">Auto-sync</span>
-            <span>{platform.rules.autoSync ? 'Enabled' : 'Manual only'}</span>
+            <span className="rule-value">{platform.rules.autoSync ? 'Enabled' : 'Manual only'}</span>
           </div>
-          <div>
+          <div className="rule-cell">
             <span className="info-label">Conditions</span>
-            <span>{platform.rules.conditions}</span>
+            <span className="rule-value">{platform.rules.conditions}</span>
           </div>
-          <div>
-            <span className="info-label">Price</span>
-            <span>{platform.rules.priceModifier}</span>
+          <div className="rule-cell">
+            <span className="info-label">Pricing</span>
+            <span className="rule-value">{platform.rules.priceModifier}</span>
           </div>
-          <div>
+          <div className="rule-cell">
             <span className="info-label">Minimum</span>
-            <span>{platform.rules.minPrice}</span>
+            <span className="rule-value">{platform.rules.minPrice}</span>
           </div>
         </div>
       </div>
 
-      <div className="products-container">
-        <div className="products-header">
-          <h2>{platform.name} listings</h2>
-          <div className="products-controls">
-            <div className="search-box">
+      <div className="panel">
+        <div className="panel-head">
+          <h2>
+            {platform.name} listings
+            <span className="count-chip">{filteredProducts.length}</span>
+          </h2>
+          <div className="panel-tools">
+            <div className="search">
+              <SearchIcon size={15} />
               <input
                 type="text"
-                placeholder="Search title, author, or ISBN..."
+                placeholder="Search title, author, or ISBN…"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="search-input"
@@ -140,7 +169,7 @@ function PlatformView({ platform, products, onProductClick }) {
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="filter-select"
+              className="select"
             >
               <option value="all">All statuses</option>
               <option value="listed">Listed</option>
@@ -151,31 +180,35 @@ function PlatformView({ platform, products, onProductClick }) {
             <select
               value={itemsPerPage}
               onChange={(e) => setItemsPerPage(Number(e.target.value))}
-              className="per-page-select"
+              className="select"
             >
-              <option value="10">10 per page</option>
-              <option value="25">25 per page</option>
-              <option value="50">50 per page</option>
-              <option value="100">100 per page</option>
+              <option value={10}>10 / page</option>
+              <option value={25}>25 / page</option>
+              <option value={50}>50 / page</option>
+              <option value={100}>100 / page</option>
             </select>
           </div>
         </div>
 
         {filteredProducts.length === 0 ? (
           <div className="empty-state">
-            <p>No products match this {platform.name} filter.</p>
+            <div className="empty-icon">
+              <BookIcon size={26} />
+            </div>
+            <div className="empty-title">Nothing here</div>
+            <div className="empty-hint">No products match this {platform.name} filter.</div>
           </div>
         ) : (
           <>
-            <div className="products-table">
+            <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Image</th>
+                    <th />
                     <th>Title</th>
                     <th>ISBN</th>
                     <th>Base price</th>
-                    <th>Platform price</th>
+                    <th>{platform.name} price</th>
                     <th>Status</th>
                     <th>Listing ID</th>
                     <th>Last synced</th>
@@ -187,15 +220,17 @@ function PlatformView({ platform, products, onProductClick }) {
                     const status = getListingStatus(product, platform.id);
                     return (
                       <tr key={product.id} onClick={() => onProductClick(product)}>
-                        <td>
+                        <td className="thumb-cell">
                           {product.images?.[0] ? (
                             <img src={product.images[0]} alt={product.title} className="product-thumbnail" />
                           ) : (
-                            <div className="no-image">📖</div>
+                            <div className="no-image">
+                              <BookIcon size={20} />
+                            </div>
                           )}
                         </td>
                         <td className="product-title">{product.title}</td>
-                        <td><code>{product.isbn || '-'}</code></td>
+                        <td>{product.isbn ? <span className="mono">{product.isbn}</span> : '—'}</td>
                         <td className="price">${parseFloat(product.price).toFixed(2)}</td>
                         <td className="price">
                           {listing?.platform_price
@@ -204,11 +239,22 @@ function PlatformView({ platform, products, onProductClick }) {
                         </td>
                         <td>
                           <span className={`status-badge status-${status}`}>
+                            <span className="status-badge-dot" />
                             {formatStatus(status)}
                           </span>
                         </td>
-                        <td><code>{listing?.platform_listing_id || '—'}</code></td>
-                        <td>{listing?.last_synced_at ? new Date(listing.last_synced_at).toLocaleDateString() : '—'}</td>
+                        <td>
+                          {listing?.platform_listing_id ? (
+                            <span className="mono">{listing.platform_listing_id}</span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="synced-cell">
+                          {listing?.last_synced_at
+                            ? new Date(listing.last_synced_at).toLocaleDateString()
+                            : '—'}
+                        </td>
                       </tr>
                     );
                   })}
@@ -218,14 +264,41 @@ function PlatformView({ platform, products, onProductClick }) {
 
             <div className="pagination">
               <div className="pagination-info">
-                Showing {startIndex + 1}-{Math.min(startIndex + itemsPerPage, filteredProducts.length)} of {filteredProducts.length}
+                Showing {startIndex + 1}–{Math.min(startIndex + itemsPerPage, filteredProducts.length)} of{' '}
+                {filteredProducts.length}
               </div>
               <div className="pagination-controls">
-                <button className="btn btn-pagination" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}>First</button>
-                <button className="btn btn-pagination" onClick={() => setCurrentPage((page) => page - 1)} disabled={currentPage === 1}>Previous</button>
-                <span className="page-indicator">Page {currentPage} of {totalPages}</span>
-                <button className="btn btn-pagination" onClick={() => setCurrentPage((page) => page + 1)} disabled={currentPage === totalPages}>Next</button>
-                <button className="btn btn-pagination" onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages}>Last</button>
+                <button
+                  className="page-btn"
+                  onClick={() => setCurrentPage((page) => page - 1)}
+                  disabled={currentPage === 1}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeftIcon size={15} />
+                </button>
+                {getPageNumbers(currentPage, totalPages).map((p, i) =>
+                  typeof p === 'number' ? (
+                    <button
+                      key={i}
+                      className={`page-btn ${p === currentPage ? 'active' : ''}`}
+                      onClick={() => setCurrentPage(p)}
+                    >
+                      {p}
+                    </button>
+                  ) : (
+                    <span key={i} className="page-ellipsis">
+                      …
+                    </span>
+                  )
+                )}
+                <button
+                  className="page-btn"
+                  onClick={() => setCurrentPage((page) => page + 1)}
+                  disabled={currentPage === totalPages}
+                  aria-label="Next page"
+                >
+                  <ChevronRightIcon size={15} />
+                </button>
               </div>
             </div>
           </>
@@ -234,5 +307,3 @@ function PlatformView({ platform, products, onProductClick }) {
     </div>
   );
 }
-
-export default PlatformView;

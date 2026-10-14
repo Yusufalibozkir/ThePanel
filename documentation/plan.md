@@ -1,362 +1,206 @@
-# Comprehensive System Plan: Multi-Platform Book Inventory Panel
+# ThePanel — System Plan v2 (Refined)
 
-## System Architecture
+> Supersedes v1. Refined after architecture review on 2026-10-14.
+> Phase 1 (Shopify sync → dashboard) exists; this plan governs everything from here on.
 
-**Tech Stack Recommendation:**
-- **Backend:** Node.js + Express (JavaScript/TypeScript)
-  - Reason: Excellent API integration libraries for all platforms, async by nature, easy webhook handling
-- **Database:** PostgreSQL
-  - Reason: Relational data (products linked to multiple platform listings), JSON support for flexible fields
-- **Frontend:** React + Tailwind CSS
-  - Reason: Modern, responsive dashboard, component-based for listing cards
-- **Task Queue:** Bull + Redis
-  - Reason: Handle async syncing, retry failed API calls, rate limit management
-- **API Documentation:** OpenAPI/Swagger for your own endpoints
+## Locked Decisions
 
----
-
-## Database Schema
-
-```
-products (master table - from Shopify)
-├── id (UUID)
-├── shopify_product_id (string, unique)
-├── isbn (string, indexed)
-├── title (string)
-├── author (string)
-├── description (text)
-├── price (decimal)
-├── cost (decimal) - for profit tracking
-├── condition (enum: new, like_new, very_good, good, acceptable)
-├── quantity (integer)
-├── images (jsonb array)
-├── metadata (jsonb) - publisher, year, binding, etc.
-├── created_at / updated_at
-
-platform_listings
-├── id (UUID)
-├── product_id (FK to products)
-├── platform (enum: ebay, abebooks, etsy)
-├── platform_listing_id (string)
-├── status (enum: draft, active, sold, error, delisted)
-├── platform_price (decimal) - can differ from base price
-├── platform_url (string)
-├── sync_enabled (boolean)
-├── last_synced_at (timestamp)
-├── error_message (text)
-├── created_at / updated_at
-
-sync_rules
-├── id (UUID)
-├── platform (enum: ebay, abebooks, etsy)
-├── enabled (boolean)
-├── conditions (jsonb) - filters: min_price, max_price, condition, tags, etc.
-├── price_modifier (jsonb) - e.g., +10%, -$5
-├── auto_sync (boolean)
-
-sync_logs
-├── id (UUID)
-├── product_id (FK)
-├── platform
-├── action (enum: create, update, delete)
-├── status (success, failed)
-├── details (jsonb)
-├── timestamp
-
-platform_credentials
-├── platform (primary key)
-├── credentials (encrypted jsonb)
-├── token_expires_at
-├── last_validated_at
-```
+| Decision | Choice | Consequence |
+|---|---|---|
+| Database | **SQLite** (better-sqlite3) | Drop `pg`, `node-pg-migrate`. No Postgres install ever needed. |
+| AbeBooks | **Export-file channel** | Panel generates bulk-upload files; no real-time AbeBooks sync. |
+| Inventory model | **Single copy per product** | quantity is 0/1. A sale anywhere closes the book everywhere. |
+| App shape | **Standalone panel** | Keep `backend/` + `frontend/`. Archive the Remix app `the-panel/`. |
+| Job queue | **In-process runner** | No Bull/Redis. Retry + backoff in a durable `jobs` table. |
+| Book metadata | **Tags convention + ISBN enrichment** | Parse `author:`, `condition:` etc. from Shopify tags; OpenLibrary lookup as fallback, flagged unverified. |
+| Shopify API | **GraphQL Admin API** | REST `/products.json` is legacy. Migrate the sync client. |
 
 ---
 
-## System Components
-
-### 1. **Backend API Server** (`/backend`)
-
-**Core Services:**
+## Architecture
 
 ```
-/services
-├── shopify-service.js       # Fetch products, handle webhooks
-├── ebay-service.js          # List, update, delete on eBay
-├── abebooks-service.js      # AbeBooks integration
-├── etsy-service.js          # Etsy integration
-├── sync-engine.js           # Orchestrates syncing logic
-├── pricing-engine.js        # Calculate platform-specific prices
-└── inventory-manager.js     # Track inventory across platforms
+Shopify (master catalog, GraphQL Admin API)
+        │  pull (polling + optional webhook later)
+        ▼
+┌─────────────────────────────┐
+│ Backend (Express, port 3001)│
+│  ├── sync engine            │
+│  ├── rules + pricing engine │
+│  ├── job runner (retries)   │
+│  └── channel adapters       │
+│       ├── ebay   (Sell Inventory API, OAuth)      ── live sync
+│       ├── etsy   (Open API v3, OAuth)             ── live sync
+│       └── abebooks (export file generator)        ── manual upload
+└──────────┬──────────────────┘
+           │ SQLite (backend/database/thepanel.db)
+           ▼
+Frontend (React + Vite, port 5173) — single-operator dashboard
 ```
 
-**API Endpoints:**
-
-```
-Authentication:
-POST /api/auth/setup         # Initial platform credential setup
-
-Products:
-GET  /api/products           # List all products with platform status
-GET  /api/products/:id       # Single product with all listings
-POST /api/products/sync      # Manual sync from Shopify
-
-Platforms:
-GET  /api/platforms          # Status of all platform connections
-POST /api/platforms/:name/test    # Test platform credentials
-GET  /api/platforms/:name/listings # Get all listings on platform
-
-Listings:
-POST /api/listings/create    # Create listing on specific platform(s)
-PUT  /api/listings/:id       # Update listing
-DELETE /api/listings/:id     # Remove listing
-POST /api/listings/bulk-sync # Sync multiple products
-
-Sync Rules:
-GET  /api/sync-rules
-POST /api/sync-rules
-PUT  /api/sync-rules/:id
-
-Webhooks:
-POST /api/webhooks/shopify   # Shopify webhook receiver
-POST /api/webhooks/ebay      # eBay notifications
-```
-
-### 2. **Frontend Dashboard** (`/frontend`)
-
-**Pages/Views:**
-
-**Dashboard (Home)**
-```
-┌─────────────────────────────────────────────────────────┐
-│ ThePanel - Book Inventory Manager                      │
-├─────────────────────────────────────────────────────────┤
-│ [Platform Status Bar]                                   │
-│ Shopify: ✓ Connected (142 products)                    │
-│ eBay: ✓ Connected (89 listings) | AbeBooks: ⚠ Issues  │
-│ Etsy: ✓ Connected (12 listings)                        │
-├─────────────────────────────────────────────────────────┤
-│ Quick Stats:                                            │
-│ Total Products: 142 | Listed: 101 | Pending: 23        │
-│ Sync Errors: 4 [View]                                  │
-├─────────────────────────────────────────────────────────┤
-│ [Sync All from Shopify] [View Logs] [Settings]        │
-└─────────────────────────────────────────────────────────┘
-```
-
-**Products List**
-```
-┌─────────────────────────────────────────────────────────┐
-│ Search: [_____________] Filter: [All/Synced/Not Synced]│
-├──────┬────────────────────┬──────────┬─────────────────┤
-│ Img  │ Title/Author       │ Price    │ Platforms       │
-├──────┼────────────────────┼──────────┼─────────────────┤
-│ [📖] │ The Great Gatsby   │ $15.99   │ 🛒 ✓ 📦 ✓ 🎨 -  │
-│      │ F. Scott Fitzgerald│          │ [Sync Now]      │
-├──────┼────────────────────┼──────────┼─────────────────┤
-│ [📖] │ 1984               │ $12.50   │ 🛒 ✓ 📦 ⚠ 🎨 ✓  │
-│      │ George Orwell      │          │ [Fix Error]     │
-└──────┴────────────────────┴──────────┴─────────────────┘
-
-Legend: 🛒=eBay, 📦=AbeBooks, 🎨=Etsy
-```
-
-**Product Detail View**
-```
-┌─────────────────────────────────────────────────────────┐
-│ ← Back to Products                                      │
-├─────────────────────────────────────────────────────────┤
-│ [Product Image]  │ The Great Gatsby                     │
-│                  │ by F. Scott Fitzgerald                │
-│                  │ ISBN: 978-0-7432-7356-5              │
-│                  │ Condition: Very Good                  │
-│                  │ Base Price: $15.99 | Quantity: 3     │
-├──────────────────┴──────────────────────────────────────┤
-│ Platform Listings:                                      │
-│                                                          │
-│ eBay: ✓ Active                                          │
-│   Price: $16.99 | Listed: 2 days ago                   │
-│   [View on eBay] [Update] [Delist]                     │
-│                                                          │
-│ AbeBooks: ✓ Active                                      │
-│   Price: $18.99 | Listed: 1 week ago                   │
-│   [View] [Update] [Delist]                             │
-│                                                          │
-│ Etsy: ✗ Not Listed                                      │
-│   Reason: Not vintage (published 1925 but edition 2004)│
-│   [Override & List]                                     │
-│                                                          │
-│ [Sync All Platforms]                                    │
-└─────────────────────────────────────────────────────────┘
-```
-
-**Sync Rules Configuration**
-```
-┌─────────────────────────────────────────────────────────┐
-│ Sync Rules - Configure which products go where         │
-├─────────────────────────────────────────────────────────┤
-│ eBay Rules:                                             │
-│ ☑ Auto-sync enabled                                     │
-│ ☑ All conditions                                        │
-│ Price: Base price + 7% (eBay fees)                     │
-│ Minimum price: $5.00                                    │
-│ [Save]                                                  │
-├─────────────────────────────────────────────────────────┤
-│ AbeBooks Rules:                                         │
-│ ☑ Auto-sync enabled                                     │
-│ ☑ Only: Very Good, Like New, New                       │
-│ ☐ Vintage only (20+ years)                             │
-│ Price: Base price + 15%                                 │
-│ Minimum price: $10.00                                   │
-│ [Save]                                                  │
-├─────────────────────────────────────────────────────────┤
-│ Etsy Rules:                                             │
-│ ☐ Auto-sync enabled (manual only)                       │
-│ ☑ Vintage only (published before 2006)                 │
-│ Price: Base price + 20%                                 │
-│ [Save]                                                  │
-└─────────────────────────────────────────────────────────┘
-```
-
-**Settings/Credentials**
-```
-┌─────────────────────────────────────────────────────────┐
-│ Platform Credentials                                    │
-├─────────────────────────────────────────────────────────┤
-│ Shopify:                                                │
-│ Store URL: [your-store.myshopify.com]                  │
-│ API Key: [****************]                             │
-│ API Secret: [****************]                          │
-│ [Test Connection] Status: ✓ Connected                  │
-├─────────────────────────────────────────────────────────┤
-│ eBay:                                                   │
-│ App ID: [****************]                              │
-│ OAuth Token: [Valid until: Dec 2026]                   │
-│ [Refresh Token] [Test Connection]                      │
-├─────────────────────────────────────────────────────────┤
-│ [Similar for AbeBooks and Etsy]                         │
-└─────────────────────────────────────────────────────────┘
-```
+Data flow stays one-way: Shopify is the source of truth for product data; channels only report back **sales** and **listing errors**.
 
 ---
 
-## Core Workflows
+## Database Schema (v2, SQLite)
 
-### Workflow 1: Initial Setup
-1. User enters platform credentials in Settings
-2. System validates each connection
-3. Performs initial sync from Shopify (imports all products)
-4. User configures sync rules for each platform
-5. User can bulk-sync or manually select products to list
+Existing 5 tables stay; changes below.
 
-### Workflow 2: New Product Added to Shopify
-1. Shopify webhook triggers → `/api/webhooks/shopify`
-2. Backend fetches product details
-3. Saves to `products` table
-4. Evaluates sync rules for each platform
-5. If auto-sync enabled and rules match:
-   - Queues sync jobs for applicable platforms
-   - Applies pricing modifiers
-   - Creates listings via platform APIs
-6. Updates `platform_listings` table
-7. Frontend shows notification: "New product synced to eBay, AbeBooks"
+### `products`
+- Keep all current columns.
+- **Semantics change:** `quantity` is treated as 0/1 (single copy). 1 = available, 0 = gone.
+- Add `sold_at` (timestamp), `sold_via` (platform or `shopify`), `metadata_status` (`ok` | `partial` | `unverified` | `missing`) to drive the UI's "needs attention" badges.
 
-### Workflow 3: Product Sold on eBay
-1. eBay webhook/notification received
-2. System identifies product via `platform_listings.platform_listing_id`
-3. Decrements `products.quantity`
-4. If quantity = 0:
-   - Marks all other platform listings for delisting
-   - Queues jobs to remove from AbeBooks, Etsy
-5. Updates inventory across all platforms
+### `platform_listings`
+- `platform` enum becomes: `ebay`, `etsy`, `abebooks`.
+- For AbeBooks rows: `status` = `draft` (generated, not yet exported), `exported` (included in last export file), `sold`, `error`, `delisted`. `platform_url` stays null; add `last_exported_at`.
+- Add `external_price` (renamed from `platform_price` in code only if convenient — no data migration needed yet).
 
-### Workflow 4: Manual Sync
-1. User clicks "Sync Now" on product or "Sync All"
-2. System checks each platform's sync rules
-3. For each applicable platform:
-   - If not listed: creates new listing
-   - If listed: updates price, quantity, description
-4. Shows progress bar with platform-by-platform status
-5. Displays summary: "3 created, 5 updated, 1 failed"
+### `sync_rules`
+- Keep structure. Add per-platform defaults seeded on first run:
+  - eBay: base × 1.10, min $5.00
+  - Etsy: base × 1.20, min $10.00, `vintage_only` filter (year cutoff configurable, default 2006)
+  - AbeBooks: base × 1.15, min $4.50, conditions filter (new, like_new, very_good, good)
+- `conditions` JSON supports: `min_price`, `max_price`, `conditions[]`, `year_before`, `year_after`, `tags_any[]`, `tags_all[]`.
 
-### Workflow 5: Error Handling
-1. API call fails (rate limit, invalid data, etc.)
-2. Error logged to `sync_logs`
-3. Job moved to retry queue (max 3 attempts)
-4. Frontend shows error badge on product
-5. User can view error details and manually retry or fix
+### `sync_logs`
+- Keep. Add `platform` value `abebooks` for export operations.
+
+### `platform_credentials`
+- Keep. Credentials encrypted at rest (AES-256-GCM, key in `APP_ENCRYPTION_KEY` env var). Never returned to the frontend — only a masked preview + `last_validated_at`.
+
+### `jobs` (new)
+- Durable in-process queue: `id`, `type` (`list`, `update`, `end_listing`, `sync_shopify`, `export_abebooks`), `payload` (JSON), `status` (`pending`, `running`, `done`, `failed`), `attempts`, `max_attempts` (3), `next_run_at`, `last_error`, timestamps.
+- Runner polls every few seconds; exponential backoff on failure. No Redis.
 
 ---
 
-## Technical Implementation Details
+## Book Metadata Strategy
 
-### Rate Limiting Strategy
-```javascript
-// Different platforms have different limits
-const rateLimits = {
-  ebay: { calls: 5000, per: 'day' },
-  abebooks: { calls: 1000, per: 'hour' },
-  etsy: { calls: 10, per: 'second' }
-};
+1. **Tags (primary):** parse Shopify tags with prefix convention — `author:jrr-tolkien`, `condition:vg`, `publisher:penguin`, `year:1965`, `binding:hardcover`. Condition maps: `new`, `ln` (like new), `vg`, `g`, `acc` (acceptable).
+2. **ISBN:** from variant barcode (already captured). Used for AbeBooks export and enrichment.
+3. **Enrichment (fallback):** when `author` or `year` is missing and ISBN exists, look up OpenLibrary. Auto-filled values set `metadata_status = 'unverified'` so you can review and confirm in the UI. Confirmed edits write the canonical tags back to Shopify (optional toggle).
+4. **Backfill script:** one-time run over the existing catalog applying 1–3; report of what was filled and what still needs manual attention.
 
-// Use bottleneck library for rate limiting
-// Queue jobs intelligently
+Sync rules that depend on metadata (Etsy vintage filter, AbeBooks condition filter) skip books with `metadata_status = 'missing'` and surface them in a "Needs metadata" view rather than silently not listing.
+
+---
+
+## Channels
+
+### eBay — primary live channel
+- **API:** Sell Inventory API (`inventory_item` + `offer` + `publish`). Not the legacy Trading API.
+- **Auth:** OAuth user token; store refresh token; auto-refresh in adapter. Set up a developer account + app first (Phase 3 gate).
+- Listing requirements to enforce in adapter: category ID (books), at least 1 image, condition enum mapping, ISBN in product aspects.
+- Fees: ~13% final value + $0.30 — reflected in default pricing rule, not hardcoded.
+
+### Etsy — secondary live channel
+- **API:** Open API v3, OAuth 2.0. Requires Etsy developer app approval — apply early (it can take time).
+- Constraints: $0.20 per listing, images required, must comply with Etsy handmade/vintage/craft-supply policy — the `vintage_only` rule keeps the catalog compliant (books 20+ years old).
+- Only list products passing the vintage rule + having images.
+
+### AbeBooks — export channel
+- Panel generates a bulk inventory file (HomeBase-style tab-separated format) for all products with rule-matching + `metadata_status != 'missing'` + not already sold.
+- UI: "Generate AbeBooks export" button → downloads file → you upload via your AbeBooks bookseller account.
+- Listings created this way get `status = 'exported'`; "sold on AbeBooks" is marked manually in the panel (closes the book everywhere like any other sale).
+
+---
+
+## Pricing Engine (pure logic, built before any channel API)
+
+```
+platform_price = max( base_price × multiplier + fixed_fee , min_price )
+then apply rounding rule (default: round up to X.99)
 ```
 
-### Webhook Security
-```javascript
-// Verify webhook signatures from Shopify
-// Use HMAC validation for eBay
-// Store webhook secrets encrypted
-```
-
-### Data Sync Strategy
-- **One-way sync (recommended for MVP):** Shopify → Other platforms
-- Inventory updates come back from platforms (when sold)
-- Price/description changes only go from Shopify → platforms
-- Prevents conflict resolution complexity
-
-### Error Recovery
-- Retry queue with exponential backoff
-- Dead letter queue for persistent failures
-- Manual intervention UI for unresolvable errors
+- All inputs from `sync_rules` (per platform): `multiplier`, `fixed_fee`, `min_price`, `rounding`.
+- Guardrails: never list below `min_price`; skip (with log) if computed price < cost.
+- Ship as a pure module with unit tests — this is the first thing built in Phase 2 since everything else depends on it.
 
 ---
 
-## Implementation Phases
+## Core Workflows (revised)
 
-**Phase 1: Foundation** (Week 1-2)
-- Set up project structure
-- Database setup with migrations
-- Shopify API integration (read products)
-- Basic frontend with product list view
-- Manual sync button (Shopify → database)
+### W1 — Setup
+1. Enter Shopify token (real one — root `.env` currently has a placeholder, so Phase 1 sync is non-functional until fixed).
+2. Sync + metadata backfill.
+3. Enter eBay/Etsy credentials via the vault UI; "Test connection" per platform.
+4. Review/adjust sync rules; review unverified metadata.
 
-**Phase 2: Platform Integrations** (Week 3-5)
-- eBay API integration (create/update/delete listings)
-- AbeBooks API integration
-- Etsy API integration
-- Credential management UI
-- Platform status dashboard
+### W2 — New/changed product in Shopify
+- **MVP:** scheduled polling (default every 30 min) + manual "Sync now".
+- **Later (optional):** Shopify webhooks via public URL (Cloudflare Tunnel); only worth it if polling proves insufficient.
 
-**Phase 3: Automation** (Week 6-7)
-- Webhook handlers for Shopify
-- Sync rules engine
-- Pricing modifier logic
-- Auto-sync on product creation
-- Inventory synchronization
+### W3 — Sale on a channel (single-copy model)
+1. Channel reports sale (eBay webhook/notification or manual mark for Etsy/AbeBooks/Shopify).
+2. Set product `quantity = 0`, `sold_at`, `sold_via`.
+3. Queue `end_listing` jobs for every other active listing.
+4. Shopify quantity update queued as well (so the store stays accurate).
 
-**Phase 4: Polish** (Week 8)
-- Error handling UI
-- Sync logs and history
-- Bulk operations
-- Performance optimization
-- Testing and bug fixes
+### W4 — Manual sync
+- Per product ("Sync", "Delist") and bulk ("Sync all eligible"). Progress + summary: "3 created, 5 updated, 1 failed, 4 skipped (metadata missing)".
+
+### W5 — Errors
+- Job fails → retry ×3 with backoff → `failed` with `last_error`.
+- Product row shows error badge; error detail view; "Retry" button.
+- Persistent failures land in a "Needs attention" filter.
+
+### W6 — Product deleted in Shopify
+- Mark product `delisted_pending` → queue `end_listing` on all channels → keep row for audit (never hard-delete from panel).
 
 ---
 
-## Next Steps
+## Security
 
-1. Set up the project structure (backend, frontend, database)
-2. Install necessary dependencies
-3. Begin Phase 1 implementation
-4. Create API credential setup guide for each platform
+- Encrypt channel credentials at rest (AES-256-GCM, `APP_ENCRYPTION_KEY`).
+- Rotate the Shopify API secret currently in root `.env` once development stabilizes (it has been sitting in a local file).
+- `.env` files stay gitignored (already correct). Backend never exposes raw credentials over API.
+- Panel is localhost-only; no auth needed for MVP, but bind Express to `127.0.0.1`.
+
+---
+
+## Cleanup (Phase 2, Task 0)
+
+- Remove deps: `pg`, `node-pg-migrate`, `@shopify/shopify-api`, `@shopify/shopify-app-remix`; delete `migrate.config.js`.
+- Archive `the-panel/` (move to `archive/the-panel/` or delete — it's the unused Remix scaffold).
+- Delete stale `database/migrations/` (Postgres ones) if present.
+- Set a real `SHOPIFY_ACCESS_TOKEN` in `backend/.env` (custom app with `read_products`, `read_inventory` scopes; GraphQL-ready).
+- Consolidate `PROGRESS.md` / `READY.md` / `SETUP.md` into one `README.md` reflecting SQLite reality (current docs contradict each other: Postgres vs SQLite).
+- Frontend `condition` filter currently filters a column nothing populates — wire it to the new metadata pipeline.
+
+---
+
+## Implementation Phases (v2)
+
+**Phase 2 — Foundation hardening + engines (no channel APIs)**
+- [ ] Task 0 cleanup (above)
+- [ ] GraphQL Admin API sync client (replaces REST)
+- [ ] Metadata pipeline: tag parser, OpenLibrary enrichment, backfill script, `metadata_status`
+- [ ] Pricing engine + rules evaluation (pure modules + unit tests)
+- [ ] Credential vault (encrypted storage + masked API + test-connection stubs)
+- [ ] Jobs table + runner with retries
+- [ ] Frontend: settings/credentials view, rules editor, metadata review view
+
+**Phase 3 — eBay end-to-end**
+- [ ] eBay developer app + OAuth flow
+- [ ] Adapter: create/update/end listings via Sell Inventory API
+- [ ] Wire rules → pricing → listing flow; sale detection; W3 delist-everywhere flow
+- [ ] Logs + error UI; "Needs attention" view
+
+**Phase 4 — AbeBooks export + Etsy**
+- [ ] AbeBooks export file generator + manual sold-marking
+- [ ] Etsy app approval (apply early in Phase 3), OAuth, adapter, vintage-rule enforcement
+
+**Phase 5 — Automation + polish**
+- [ ] Scheduled polling sync (W2), Shopify delete handling (W6)
+- [ ] Optional webhooks via tunnel
+- [ ] Bulk operations, performance, final consolidation of docs
+
+---
+
+## Explicitly Out of Scope (for now)
+
+- Real-time AbeBooks sync (no API exists)
+- Multi-quantity inventory (each book is a single copy)
+- Multi-user auth / hosted deployment
+- Price/stock sync *from* channels back to Shopify (Shopify stays master)

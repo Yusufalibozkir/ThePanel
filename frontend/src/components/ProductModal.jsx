@@ -1,11 +1,46 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DOMPurify from 'dompurify';
+import {
+  CloseIcon,
+  BookIcon,
+  TrashIcon,
+  CopyIcon,
+  EditIcon,
+} from './icons';
 import './ProductModal.css';
+
+const CHANNELS = [
+  { id: 'ebay', name: 'eBay', glyph: 'e' },
+  { id: 'abebooks', name: 'AbeBooks', glyph: 'A' },
+  { id: 'etsy', name: 'Etsy', glyph: 'E' },
+];
+
+function getPlatformStatus(product, platformId) {
+  const listing = product.platform_listings?.find((l) => l.platform === platformId);
+  const map = {
+    active: { label: 'Active', tone: 'active' },
+    draft: { label: 'Draft', tone: 'draft' },
+    error: { label: 'Error', tone: 'error' },
+  };
+  return listing ? map[listing.status] || map.draft : { label: 'Not listed', tone: 'unlisted' };
+}
 
 function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editedProduct, setEditedProduct] = useState({ ...product });
   const [selectedImage, setSelectedImage] = useState(0);
+
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      document.body.style.overflow = '';
+    };
+  }, [onClose]);
 
   const handleSave = () => {
     onSave(editedProduct);
@@ -17,45 +52,34 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
     setIsEditing(false);
   };
 
-  const handlePublishToPlatform = (platform) => {
-    // TODO: Implement platform publishing
-    alert(`Publishing to ${platform}...`);
+  const handlePublishToPlatform = (platformName) => {
+    alert(`Publishing to ${platformName}...`);
   };
 
   const formatCondition = (condition) => {
-    if (!condition) return '-';
-    return condition.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
-  };
-
-  const getPlatformStatus = (platform) => {
-    const listing = product.platform_listings?.find(l => l.platform === platform);
-    if (!listing) return { icon: '⚪', status: 'Not Listed', color: '#94a3b8' };
-    
-    const statusMap = {
-      'active': { icon: '✅', status: 'Active', color: '#10b981' },
-      'draft': { icon: '📝', status: 'Draft', color: '#f59e0b' },
-      'error': { icon: '⚠️', status: 'Error', color: '#ef4444' },
-    };
-    
-    return statusMap[listing.status] || statusMap.draft;
+    if (!condition) return '—';
+    return condition.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase());
   };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-header">
-          <h2>{isEditing ? 'Edit Product' : 'Product Details'}</h2>
-          <button className="modal-close" onClick={onClose}>×</button>
+          <h2>{isEditing ? 'Edit product' : 'Product details'}</h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close">
+            <CloseIcon size={17} />
+          </button>
         </div>
 
         <div className="modal-body">
-          {/* Image Gallery */}
           <div className="image-section">
             <div className="main-image">
               {product.images && product.images.length > 0 ? (
                 <img src={product.images[selectedImage]} alt={product.title} />
               ) : (
-                <div className="no-image-large">📖</div>
+                <div className="no-image-large">
+                  <BookIcon size={44} />
+                </div>
               )}
             </div>
             {product.images && product.images.length > 1 && (
@@ -73,7 +97,6 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
             )}
           </div>
 
-          {/* Product Info */}
           <div className="info-section">
             {isEditing ? (
               <>
@@ -103,7 +126,7 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
                     />
                   </div>
                 </div>
-                <div className="form-row">
+                <div className="form-row form-row-3">
                   <div className="form-group">
                     <label>Price ($)</label>
                     <input
@@ -127,7 +150,7 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
                       value={editedProduct.condition || ''}
                       onChange={(e) => setEditedProduct({ ...editedProduct, condition: e.target.value })}
                     >
-                      <option value="">Select...</option>
+                      <option value="">Select…</option>
                       <option value="new">New</option>
                       <option value="like_new">Like New</option>
                       <option value="very_good">Very Good</option>
@@ -141,7 +164,7 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
                   <textarea
                     value={editedProduct.description || ''}
                     onChange={(e) => setEditedProduct({ ...editedProduct, description: e.target.value })}
-                    rows="4"
+                    rows="5"
                   />
                 </div>
               </>
@@ -151,11 +174,13 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
                 <div className="info-grid">
                   <div className="info-item">
                     <span className="info-label">Author</span>
-                    <span className="info-value">{product.author || '-'}</span>
+                    <span className="info-value">{product.author || '—'}</span>
                   </div>
                   <div className="info-item">
                     <span className="info-label">ISBN</span>
-                    <span className="info-value"><code>{product.isbn || '-'}</code></span>
+                    <span className="info-value">
+                      <span className="mono">{product.isbn || '—'}</span>
+                    </span>
                   </div>
                   <div className="info-item">
                     <span className="info-label">Price</span>
@@ -168,12 +193,16 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
                   <div className="info-item">
                     <span className="info-label">Condition</span>
                     <span className="info-value">
-                      <span className="condition-badge">{formatCondition(product.condition)}</span>
+                      <span className={`condition-badge c-${product.condition || 'none'}`}>
+                        {formatCondition(product.condition)}
+                      </span>
                     </span>
                   </div>
                   <div className="info-item">
                     <span className="info-label">SKU</span>
-                    <span className="info-value"><code>{product.sku || '-'}</code></span>
+                    <span className="info-value">
+                      <span className="mono">{product.sku || '—'}</span>
+                    </span>
                   </div>
                 </div>
                 {product.description && (
@@ -193,27 +222,27 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
               </>
             )}
 
-            {/* Platform Status */}
             <div className="platform-section">
-              <h4>Platform Listings</h4>
+              <h4>Channel listings</h4>
               <div className="platform-cards">
-                {['ebay', 'abebooks', 'etsy'].map(platform => {
-                  const status = getPlatformStatus(platform);
+                {CHANNELS.map((channel) => {
+                  const status = getPlatformStatus(product, channel.id);
                   return (
-                    <div key={platform} className="platform-card">
+                    <div key={channel.id} className="platform-card">
                       <div className="platform-card-header">
-                        <span className="platform-icon-large">{status.icon}</span>
+                        <span className={`platform-chip tone-${status.tone}`}>{channel.glyph}</span>
                         <div>
-                          <div className="platform-name">{platform.charAt(0).toUpperCase() + platform.slice(1)}</div>
-                          <div className="platform-status" style={{ color: status.color }}>
-                            {status.status}
+                          <div className="platform-name">{channel.name}</div>
+                          <div className={`platform-status tone-${status.tone}`}>
+                            <span className="status-mini-dot" />
+                            {status.label}
                           </div>
                         </div>
                       </div>
-                      {status.status === 'Not Listed' && (
-                        <button 
-                          className="btn btn-small btn-primary"
-                          onClick={() => handlePublishToPlatform(platform)}
+                      {status.tone === 'unlisted' && (
+                        <button
+                          className="btn btn-secondary btn-small"
+                          onClick={() => handlePublishToPlatform(channel.name)}
                         >
                           Publish
                         </button>
@@ -226,15 +255,16 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
           </div>
         </div>
 
-        {/* Modal Footer */}
         <div className="modal-footer">
           <div className="footer-left">
             {!isEditing && (
               <>
-                <button className="btn btn-danger" onClick={() => onDelete(product.id)}>
+                <button className="btn btn-danger btn-small" onClick={() => onDelete(product.id)}>
+                  <TrashIcon size={14} />
                   Delete
                 </button>
-                <button className="btn btn-secondary" onClick={() => onDuplicate(product)}>
+                <button className="btn btn-secondary btn-small" onClick={() => onDuplicate(product)}>
+                  <CopyIcon size={14} />
                   Duplicate
                 </button>
               </>
@@ -247,7 +277,7 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
                   Cancel
                 </button>
                 <button className="btn btn-primary" onClick={handleSave}>
-                  Save Changes
+                  Save changes
                 </button>
               </>
             ) : (
@@ -256,6 +286,7 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate }) {
                   Close
                 </button>
                 <button className="btn btn-primary" onClick={() => setIsEditing(true)}>
+                  <EditIcon size={14} />
                   Edit
                 </button>
               </>
