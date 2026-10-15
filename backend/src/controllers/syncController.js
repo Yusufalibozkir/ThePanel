@@ -6,13 +6,17 @@ const jobService = require('../services/jobService');
 // Sync products from Shopify (GraphQL) into the database.
 // Response shape kept stable for the frontend:
 //   { success, message, results: { created, updated, errors, enriched } }
+// The run id generated here is both the sync_log row id and the run_id stamped
+// on every field-change entry the run produces.
 const syncFromShopify = async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 250, 250);
+    const runId = syncLogService.newRunId();
 
     const shopifyResult = await shopifyService.getProducts(limit);
     if (!shopifyResult.success) {
       await syncLogService.createLog({
+        id: runId,
         platform: 'shopify',
         action: 'sync',
         status: 'failed',
@@ -25,9 +29,10 @@ const syncFromShopify = async (req, res) => {
       });
     }
 
-    const syncResults = await productService.syncProductsFromShopify(shopifyResult.products);
+    const syncResults = await productService.syncProductsFromShopify(shopifyResult.products, { runId });
 
     await syncLogService.createLog({
+      id: runId,
       platform: 'shopify',
       action: 'sync',
       status: syncResults.errors.length > 0 ? 'failed' : 'success',

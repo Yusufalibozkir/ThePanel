@@ -23,8 +23,9 @@ class ProductService {
   // Sync products (normalized shape from shopifyService) into the local DB.
   // The products table is the TRUTH mirror: Shopify values always win here.
   // Manual panel edits live as an overlay in product_changes and are untouched.
-  // Truth changes are recorded as 'sync' history entries (informational).
-  async syncProductsFromShopify(shopifyProducts, { enrich = true } = {}) {
+  // Truth changes are recorded as 'sync' history entries (informational),
+  // stamped with the run id so the run log links to its changes.
+  async syncProductsFromShopify(shopifyProducts, { enrich = true, runId = null } = {}) {
     const results = { created: 0, updated: 0, errors: [], enriched: 0 };
 
     for (const shopifyProduct of shopifyProducts) {
@@ -41,7 +42,7 @@ class ProductService {
         }
 
         if (existing) {
-          this.recordTruthChanges(existing.id, existing, productData);
+          this.recordTruthChanges(existing.id, existing, productData, runId);
           this.update(existing.id, productData);
           results.updated++;
         } else {
@@ -60,7 +61,7 @@ class ProductService {
   }
 
   // Log which truth fields actually changed during a sync (informational history).
-  recordTruthChanges(productId, before, mapped) {
+  recordTruthChanges(productId, before, mapped, runId = null) {
     const tracked = [
       'title',
       'description',
@@ -82,7 +83,7 @@ class ProductService {
       }
     }
     if (changes.length > 0) {
-      changeLogService.record(productId, 'sync', changes);
+      changeLogService.record(productId, 'sync', changes, null, runId);
     }
   }
 
@@ -103,6 +104,9 @@ class ProductService {
       publisher: tags.publisher,
       year: tags.year,
       binding: tags.binding,
+      // Seller SKU: needed as the book/inventory number for the AbeBooks
+      // export and as a seller identifier on eBay listings.
+      sku: variant.sku || null,
     };
 
     let author = tags.author;

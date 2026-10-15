@@ -1,9 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
-import { productsAPI, syncAPI, shopifyAPI } from './api';
+import { productsAPI, syncAPI, shopifyAPI, settingsAPI } from './api';
 import ProductModal from './components/ProductModal';
 import PlatformView from './components/PlatformView';
 import SettingsView from './components/SettingsView';
 import MetadataReview from './components/MetadataReview';
+import LogsPanel from './components/LogsPanel';
+import ExportDialog from './components/ExportDialog';
+import NotesTemplateDialog from './components/NotesTemplateDialog';
 import { PLATFORMS } from './platforms';
 import logo from './assets/logo.png';
 import { getPageNumbers } from './pagination';
@@ -20,7 +23,7 @@ import {
 import './App.css';
 
 const CHANNEL_IDS = ['ebay', 'abebooks', 'etsy'];
-const GLYPHS = { overview: 'S', ebay: 'e', abebooks: 'A', etsy: 'E', metadata: 'M', settings: '⚙' };
+const GLYPHS = { overview: 'S', ebay: 'e', abebooks: 'A', etsy: 'E', metadata: 'M', logs: '≡', settings: '⚙' };
 const PLATFORM_NAMES = { ebay: 'eBay', abebooks: 'AbeBooks', etsy: 'Etsy' };
 const META_STATUS = {
   ok: { label: 'OK', cls: 'ok' },
@@ -55,6 +58,14 @@ export default function App() {
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterVendor, setFilterVendor] = useState('all');
   const [activeTab, setActiveTab] = useState('overview');
+
+  // Bulk selection in the overview table (across pages/filters)
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [showNotesDialog, setShowNotesDialog] = useState(false);
+  // Channel connection state, derived from the credential vault (a platform
+  // with stored credentials counts as connected for UI purposes)
+  const [connectedPlatforms, setConnectedPlatforms] = useState({});
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -98,6 +109,17 @@ export default function App() {
 
   useEffect(() => {
     fetchProducts();
+    // Derive channel connection state from stored credentials (masked response)
+    settingsAPI
+      .getCredentials()
+      .then((res) => {
+        const map = {};
+        for (const c of res.data.credentials || []) {
+          map[c.platform] = Object.keys(c.preview || {}).length > 0;
+        }
+        setConnectedPlatforms(map);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -169,6 +191,49 @@ export default function App() {
   };
 
   const handleProductClick = (product) => setSelectedProduct(product);
+
+  // Open a product by id from anywhere (e.g. the Logs panel)
+  const handleOpenProductById = async (productId) => {
+    const local = products.find((p) => p.id === productId);
+    if (local) {
+      setSelectedProduct(local);
+      return;
+    }
+    try {
+      const res = await productsAPI.getById(productId);
+      if (res.data.product) setSelectedProduct(res.data.product);
+    } catch {
+      /* product no longer exists */
+    }
+  };
+
+  // ---- Bulk selection ----
+  const toggleSelected = (productId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  };
+
+  const allFilteredSelected =
+    filteredProducts.length > 0 && filteredProducts.every((p) => selectedIds.has(p.id));
+
+  const toggleSelectAllFiltered = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        for (const p of filteredProducts) next.delete(p.id);
+      } else {
+        for (const p of filteredProducts) next.add(p.id);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+  const selectedIdList = useMemo(() => [...selectedIds], [selectedIds]);
 
   const handleSaveProduct = async (updatedProduct, { keepOpen = false } = {}) => {
     try {
@@ -262,10 +327,10 @@ export default function App() {
               <span className="nav-label">
                 <span className="nav-name">{PLATFORM_NAMES[id]}</span>
                 <span className="nav-desc">
-                  {PLATFORMS[id].connected ? 'Connected' : 'Not connected'}
+                  {connectedPlatforms[id] ? 'Connected' : 'Not connected'}
                 </span>
               </span>
-              <span className={`nav-dot ${PLATFORMS[id].connected ? 'on' : ''}`} />
+              <span className={`nav-dot ${connectedPlatforms[id] ? 'on' : ''}`} />
             </button>
           ))}
 
@@ -280,6 +345,16 @@ export default function App() {
               <span className="nav-desc">
                 {products.filter((p) => ['unverified', 'missing'].includes(p.metadata_status)).length} need attention
               </span>
+            </span>
+          </button>
+          <button
+            className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
+            onClick={() => setActiveTab('logs')}
+          >
+            <span className="nav-glyph">{GLYPHS.logs}</span>
+            <span className="nav-label">
+              <span className="nav-name">Logs</span>
+              <span className="nav-desc">Sync runs &amp; change history</span>
             </span>
           </button>
           <button
@@ -328,12 +403,16 @@ export default function App() {
             <SettingsView onShopifyTest={testShopify} />
           ) : activeTab === 'metadata' ? (
             <MetadataReview onChanged={fetchProducts} />
+          ) : activeTab === 'logs' ? (
+            <LogsPanel onOpenProduct={handleOpenProductById} onRefreshProducts={fetchProducts} />
           ) : activeTab !== 'overview' ? (
             <PlatformView
               platform={activePlatform}
               products={products}
               facets={facets}
+              connected={connectedPlatforms[activeTab] || false}
               onProductClick={handleProductClick}
+              onProductsChanged={fetchProducts}
             />
           ) : (
             <>
@@ -378,8 +457,7 @@ export default function App() {
                     Products
                     <span className="count-chip">{filteredProducts.length}</span>
                   </h2>
-                  <div className="panel-tools">
-                    <div className="search">
+                  <div className="panel-tools">                    <div className="search">
                       <SearchIcon size={15} />
                       <input
                         type="text"
@@ -461,6 +539,29 @@ export default function App() {
                   </div>
                 </div>
 
+                {selectedIdList.length > 0 && (
+                  <div className="bulk-bar">
+                    <span className="bulk-count">
+                      {selectedIdList.length} book{selectedIdList.length === 1 ? '' : 's'} selected
+                    </span>
+                    <div className="bulk-actions">
+                      <button className="btn btn-secondary btn-small" onClick={() => setShowNotesDialog(true)}>
+                        Notes template…
+                      </button>
+                      <button
+                        className="btn btn-primary btn-small"
+                        onClick={() => setShowExportDialog(true)}
+                        title="Compose an AbeBooks bulk-upload file from the selected books"
+                      >
+                        AbeBooks export…
+                      </button>
+                      <button className="btn btn-secondary btn-small" onClick={clearSelection}>
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {loading ? (
                   <div className="loading">
                     <span className="spinner" style={{ borderTopColor: 'var(--brass)' }} />
@@ -486,6 +587,14 @@ export default function App() {
                       <table>
                         <thead>
                           <tr>
+                            <th className="select-cell">
+                              <input
+                                type="checkbox"
+                                checked={allFilteredSelected}
+                                onChange={toggleSelectAllFiltered}
+                                title="Select all filtered books"
+                              />
+                            </th>
                             <th />
                             <th>Title</th>
                             <th>Author</th>
@@ -500,6 +609,15 @@ export default function App() {
                         <tbody>
                           {paginatedProducts.map((product) => (
                             <tr key={product.id} onClick={() => handleProductClick(product)}>
+                              <td className="select-cell">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIds.has(product.id)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={() => toggleSelected(product.id)}
+                                  title="Select for bulk actions"
+                                />
+                              </td>
                               <td className="thumb-cell">
                                 {product.images && product.images.length > 0 ? (
                                   <img
@@ -622,6 +740,26 @@ export default function App() {
               onDelete={handleDeleteProduct}
               onDuplicate={handleDuplicateProduct}
               onProductUpdated={() => handleProductRefresh(selectedProduct.id)}
+            />
+          )}
+
+          {showExportDialog && (
+            <ExportDialog
+              initialProductIds={selectedIdList}
+              onClose={() => setShowExportDialog(false)}
+              onExported={() => {
+                fetchProducts();
+                clearSelection();
+              }}
+            />
+          )}
+
+          {showNotesDialog && (
+            <NotesTemplateDialog
+              productIds={selectedIdList}
+              products={products}
+              onClose={() => setShowNotesDialog(false)}
+              onApplied={fetchProducts}
             />
           )}
         </div>

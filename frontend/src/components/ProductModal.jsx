@@ -18,6 +18,8 @@ const CHANNELS = [
   { id: 'etsy', name: 'Etsy', glyph: 'E' },
 ];
 
+const PLATFORM_NAMES = { ebay: 'eBay', abebooks: 'AbeBooks', etsy: 'Etsy' };
+
 const FIELD_LABELS = {
   title: 'Title',
   author: 'Author',
@@ -27,10 +29,16 @@ const FIELD_LABELS = {
   quantity: 'Quantity',
   condition: 'Condition',
   description: 'Description',
+  notes: 'Notes',
+  title_override: 'Title override',
 };
 
+function getListings(product) {
+  return product.platform_listings || product.listings || [];
+}
+
 function getPlatformStatus(product, platformId) {
-  const listing = product.platform_listings?.find((l) => l.platform === platformId);
+  const listing = getListings(product).find((l) => l.platform === platformId);
   const map = {
     active: { label: 'Active', tone: 'active' },
     draft: { label: 'Draft', tone: 'draft' },
@@ -43,6 +51,11 @@ function formatValue(field, value) {
   if (value === null || value === undefined) return '—';
   if (field === 'price' || field === 'cost') return `$${Number(value).toFixed(2)}`;
   if (field === 'quantity') return String(value);
+  // Long free-text fields (per-platform notes) get truncated for the inline view
+  if (field === 'notes' || field === 'title_override') {
+    const text = String(value);
+    return text.length > 80 ? text.slice(0, 80) + '…' : text;
+  }
   return String(value);
 }
 
@@ -128,12 +141,13 @@ function HistoryTab({ product, onProductUpdated }) {
 
   const handleDeleteEntry = async (entry) => {
     const fields = entry.changes.map((c) => FIELD_LABELS[c.field] || c.field).join(', ');
+    const scope = entry.platform ? ` on ${PLATFORM_NAMES[entry.platform] || entry.platform}` : '';
     const message =
       entry.source === 'manual'
-        ? `Delete this edit (${fields})?\n\n` +
+        ? `Delete this edit${scope} (${fields})?\n\n` +
           'This only removes the history entry — your current data is NOT reverted unless this was the latest edit for a field. ' +
           'Fields whose newest edit is deleted fall back to the previous value or the Shopify truth, and that protection is gone permanently.'
-        : `Delete this sync record (${fields})?\n\nThis is an informational record of a Shopify-side change. Deleting it does not affect any data.`;
+        : `Delete this sync record${scope} (${fields})?\n\nThis is an informational record of a Shopify-side change. Deleting it does not affect any data.`;
     if (!confirm(message)) return;
 
     setBusy(true);
@@ -152,7 +166,9 @@ function HistoryTab({ product, onProductUpdated }) {
   const handleResetAll = async () => {
     if (
       !confirm(
-        'Remove ALL local edits for this product?\n\nEvery field goes back to the Shopify truth value. The full edit history for this product is deleted. This cannot be undone.'
+        'Remove ALL local base edits for this product?\n\n' +
+          'Every base field (title, price, description, …) goes back to the Shopify truth value. ' +
+          'Base edit history for this product is deleted. Per-platform notes are kept — reset those individually. This cannot be undone.'
       )
     ) {
       return;
@@ -202,6 +218,9 @@ function HistoryTab({ product, onProductUpdated }) {
                 <span className={`history-source-badge src-${entry.source}`}>
                   {entry.source === 'manual' ? 'Local edit' : 'Shopify sync'}
                 </span>
+                {entry.platform && (
+                  <span className="history-platform-badge">{PLATFORM_NAMES[entry.platform] || entry.platform}</span>
+                )}
                 <span className="history-time">{new Date(entry.changed_at.replace(' ', 'T') + 'Z').toLocaleString()}</span>
                 <button
                   className="btn btn-danger btn-small history-delete"
@@ -246,11 +265,106 @@ function HistoryTab({ product, onProductUpdated }) {
   );
 }
 
+function ChannelCard({ product, channel, onPublish, onProductUpdated, onNotify }) {
+  const [editing, setEditing] = useState(false);
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const listing = getListings(product).find((l) => l.platform === channel.id);
+  const status = getPlatformStatus(product, channel.id);
+  const currentNotes = listing?.notes || null;
+
+  const startEditing = () => {
+    setNotes(currentNotes || '');
+    setError(null);
+    setEditing(true);
+  };
+
+  const saveNotes = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await productsAPI.updateListingFields(product.id, channel.id, { notes });
+      setEditing(false);
+      onNotify(`${channel.name} notes saved — versioned in History`);
+      onProductUpdated();
+    } catch (err) {
+      setError(err.response?.data?.message || err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="platform-card">
+      <div className="platform-card-header">
+        <span className={`platform-chip tone-${status.tone}`}>{channel.glyph}</span>
+        <div>
+          <div className="platform-name">{channel.name}</div>
+          <div className={`platform-status tone-${status.tone}`}>
+            <span className="status-mini-dot" />
+            {status.label}
+          </div>
+        </div>
+      </div>
+
+      {editing ? (
+        <div className="platform-notes-editor">
+          <label className="platform-notes-label">{channel.name} notes</label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder={`Platform-specific text for ${channel.name}. The main description still comes from Shopify — these notes are composed in at listing/export time.`}
+            rows={5}
+            autoFocus
+          />
+          {error && <div className="platform-notes-error">{error}</div>}
+          <div className="platform-notes-actions">
+            <button className="btn btn-secondary btn-small" disabled={busy} onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-primary btn-small" disabled={busy} onClick={saveNotes}>
+              Save notes
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {currentNotes && (
+            <div className="platform-notes-preview" title={currentNotes}>
+              {currentNotes}
+            </div>
+          )}
+          <div className="platform-card-actions">
+            <button className="btn btn-secondary btn-small" onClick={startEditing}>
+              <EditIcon size={12} />
+              {currentNotes ? 'Edit notes' : `Add ${channel.name} notes`}
+            </button>
+            {status.tone === 'unlisted' && (
+              <button className="btn btn-secondary btn-small" onClick={() => onPublish(channel.name)}>
+                Publish
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ProductModal({ product, onClose, onSave, onDelete, onDuplicate, onProductUpdated }) {
   const [activeTab, setActiveTab] = useState('details');
   const [isEditing, setIsEditing] = useState(false);
   const [editedProduct, setEditedProduct] = useState({ ...product });
   const [selectedImage, setSelectedImage] = useState(0);
+  const [modalNotice, setModalNotice] = useState(null);
+
+  useEffect(() => {
+    if (!modalNotice) return;
+    const t = setTimeout(() => setModalNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [modalNotice]);
 
   useEffect(() => {
     const handleKey = (e) => {
@@ -325,9 +439,11 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate, onProdu
             >
               <HistoryIcon size={14} />
               History
-              {(product.local_edits || []).length > 0 && (
-                <span className="history-count">{product.local_edits.length}</span>
-              )}
+              {(() => {
+                const platformEdits = getListings(product).filter((l) => l.notes || l.title_override).length;
+                const count = (product.local_edits || []).length + platformEdits;
+                return count > 0 ? <span className="history-count">{count}</span> : null;
+              })()}
             </button>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="Close">
@@ -336,6 +452,9 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate, onProdu
         </div>
 
         <div className="modal-body">
+          {modalNotice && activeTab === 'details' && (
+            <div className="modal-notice">{modalNotice}</div>
+          )}
           {activeTab === 'history' ? (
             <div className="history-body">
               <HistoryTab product={product} onProductUpdated={onProductUpdated} />
@@ -495,7 +614,7 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate, onProdu
                       <div className="info-item">
                         <span className="info-label">SKU</span>
                         <span className="info-value">
-                          <span className="mono">{product.sku || '—'}</span>
+                          <span className="mono">{product.metadata?.sku || product.sku || '—'}</span>
                         </span>
                       </div>
                       <div className="info-item">
@@ -550,31 +669,16 @@ function ProductModal({ product, onClose, onSave, onDelete, onDuplicate, onProdu
                 <div className="platform-section">
                   <h4>Channel listings</h4>
                   <div className="platform-cards">
-                    {CHANNELS.map((channel) => {
-                      const status = getPlatformStatus(product, channel.id);
-                      return (
-                        <div key={channel.id} className="platform-card">
-                          <div className="platform-card-header">
-                            <span className={`platform-chip tone-${status.tone}`}>{channel.glyph}</span>
-                            <div>
-                              <div className="platform-name">{channel.name}</div>
-                              <div className={`platform-status tone-${status.tone}`}>
-                                <span className="status-mini-dot" />
-                                {status.label}
-                              </div>
-                            </div>
-                          </div>
-                          {status.tone === 'unlisted' && (
-                            <button
-                              className="btn btn-secondary btn-small"
-                              onClick={() => handlePublishToPlatform(channel.name)}
-                            >
-                              Publish
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {CHANNELS.map((channel) => (
+                      <ChannelCard
+                        key={channel.id}
+                        product={product}
+                        channel={channel}
+                        onPublish={handlePublishToPlatform}
+                        onProductUpdated={onProductUpdated}
+                        onNotify={setModalNotice}
+                      />
+                    ))}
                   </div>
                 </div>
               </div>

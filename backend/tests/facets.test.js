@@ -32,10 +32,12 @@ testDb.exec(`
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     change_id TEXT NOT NULL,
     product_id TEXT NOT NULL,
+    platform TEXT,
     field TEXT NOT NULL,
     old_value TEXT,
     new_value TEXT,
     source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'sync')),
+    run_id TEXT,
     changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
   )

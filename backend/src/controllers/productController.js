@@ -1,6 +1,7 @@
 const productService = require('../services/productService');
 const platformListingService = require('../services/platformListingService');
 const changeLogService = require('../services/changeLogService');
+const { applyTemplate } = require('../services/listingComposer');
 
 // Distinct filterable values (tags, categories, vendor, ...) with counts
 const getFacets = async (req, res) => {
@@ -149,21 +150,26 @@ const getChanges = async (req, res) => {
   }
 };
 
-// Delete one history entry. For manual entries the edit is peeled back: the
-// affected fields fall to the previous manual value or the Shopify truth value.
+// Delete one history entry. For manual entries the edit is peeled back: base
+// fields fall to the previous manual value or the Shopify truth value, platform
+// fields fall to the previous platform version (or are cleared).
 const deleteChange = async (req, res) => {
   try {
-    const deleted = changeLogService.deleteEntry(req.params.id, req.params.changeId);
+    const existing = changeLogService.getEntry(req.params.id, req.params.changeId);
+    const deleted = existing?.platform
+      ? platformListingService.deletePlatformChangeEntry(req.params.id, req.params.changeId)
+      : changeLogService.deleteEntry(req.params.id, req.params.changeId);
     if (!deleted) {
       return res.status(404).json({ success: false, message: 'Change entry not found' });
     }
     const product = await productService.getById(req.params.id);
+    const scope = deleted.platform ? ` on ${deleted.platform}` : '';
     res.json({
       success: true,
       message:
         deleted.source === 'manual'
-          ? 'Entry deleted — affected fields fell back to their previous value (or the Shopify truth)'
-          : 'Sync record deleted (truth data unaffected)',
+          ? `Entry deleted${scope} — affected fields fell back to their previous value`
+          : `Sync record deleted${scope} (truth data unaffected)`,
       deleted,
       product,
     });
@@ -186,6 +192,78 @@ const resetLocalEdits = async (req, res) => {
   } catch (error) {
     console.error('Error resetting local edits:', error);
     res.status(500).json({ success: false, message: 'Failed to reset local edits', error: error.message });
+  }
+};
+
+// Save per-platform content fields (notes, title_override). Written directly
+// to platform_listings and journaled into product_changes scoped to the platform.
+const updateListingFields = async (req, res) => {
+  try {
+    const product = await productService.getById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    const listing = platformListingService.savePlatformFields(req.params.id, req.params.platform, {
+      notes: req.body?.notes,
+      title_override: req.body?.title_override,
+    });
+
+    res.json({
+      success: true,
+      message: `${req.params.platform} listing fields saved (versioned in history)`,
+      listing,
+    });
+  } catch (error) {
+    console.error('Error saving listing fields:', error);
+    res.status(500).json({ success: false, message: 'Failed to save listing fields', error: error.message });
+  }
+};
+
+// Bulk-apply a notes template to a selection of books for one platform.
+// The template renders per book ({title}, {author}, {year}, …) and each
+// result is saved through the normal per-platform versioning path.
+// Body: { product_ids: [], platform, template }
+const applyNotesTemplate = async (req, res) => {
+  try {
+    const { product_ids: productIds, platform, template } = req.body || {};
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'product_ids must be a non-empty array' });
+    }
+    if (!['ebay', 'abebooks', 'etsy'].includes(platform)) {
+      return res.status(400).json({ success: false, message: `Invalid platform: ${platform}` });
+    }
+    if (!template || !String(template).trim()) {
+      return res.status(400).json({ success: false, message: 'template must not be empty' });
+    }
+
+    let applied = 0;
+    const failures = [];
+    for (const productId of productIds) {
+      const product = await productService.getById(productId);
+      if (!product) {
+        failures.push({ product_id: productId, error: 'not found' });
+        continue;
+      }
+      try {
+        platformListingService.savePlatformFields(productId, platform, {
+          notes: applyTemplate(String(template), product),
+        });
+        applied++;
+      } catch (error) {
+        failures.push({ product_id: productId, error: error.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Notes template applied to ${applied} of ${productIds.length} books (${platform})`,
+      applied,
+      failures,
+    });
+  } catch (error) {
+    console.error('Error applying notes template:', error);
+    res.status(500).json({ success: false, message: 'Failed to apply notes template', error: error.message });
   }
 };
 
@@ -234,4 +312,6 @@ module.exports = {
   getChanges,
   deleteChange,
   resetLocalEdits,
+  updateListingFields,
+  applyNotesTemplate,
 };

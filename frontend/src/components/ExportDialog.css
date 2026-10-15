@@ -1,0 +1,240 @@
+.export-dialog {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  max-width: 860px;
+  width: 100%;
+  max-height: 90vh;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  animation: slideUp 0.22s ease-out;
+}
+
+.export-dialog-head {
+  padding: 18px 26px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.export-dialog-head h3 {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.export-dialog-sub {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  margin-top: 4px;
+  max-width: 560px;
+}
+
+.export-dialog-body {
+  padding: 20px 26px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.export-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.export-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--paper-soft);
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.export-mode:hover {
+  border-color: var(--line-strong);
+}
+
+.export-mode.active {
+  border-color: var(--brass);
+  background: rgba(176, 141, 87, 0.07);
+  box-shadow: var(--ring);
+}
+
+.export-mode.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.export-mode input {
+  margin-top: 3px;
+  accent-color: var(--brass);
+}
+
+.export-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.export-mode-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.export-mode-hint {
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.export-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  background: var(--clay-soft);
+  color: var(--clay);
+  font-size: 13px;
+}
+
+.export-done {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  background: var(--forest-soft);
+  color: var(--forest);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.export-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.export-preview-summary {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.export-skipped summary {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+  padding: 6px 0;
+}
+
+.export-skipped ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.export-skipped li {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.export-skipped-title {
+  font-weight: 600;
+  color: var(--ink);
+  margin-right: 6px;
+}
+
+.export-skipped-reasons {
+  color: var(--clay);
+}
+
+.export-preview-table {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: auto;
+  max-height: 320px;
+}
+
+.export-preview-table table {
+  width: 100%;
+  font-size: 12.5px;
+}
+
+.export-preview-table th {
+  position: sticky;
+  top: 0;
+  background: var(--paper-soft);
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--line);
+}
+
+.export-preview-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  vertical-align: top;
+}
+
+.export-desc-cell {
+  color: var(--ink-soft);
+  max-width: 280px;
+}
+
+.export-preview-more {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--ink-faint);
+  border-top: 1px solid var(--line);
+}
+
+.export-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 12.5px;
+}
+
+.export-dialog-footer {
+  padding: 16px 26px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: var(--paper-soft);
+}
+
+.export-dialog-footer-right {
+  display: flex;
+  gap: 10px;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(14px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}

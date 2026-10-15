@@ -24,6 +24,8 @@ const syncRoutes = require('./routes/sync');
 const settingsRoutes = require('./routes/settings');
 const rulesRoutes = require('./routes/rules');
 const jobsRoutes = require('./routes/jobs');
+const logsRoutes = require('./routes/logs');
+const abebooksRoutes = require('./routes/abebooks');
 
 // Use routes
 app.use('/api/shopify', shopifyRoutes);
@@ -32,6 +34,8 @@ app.use('/api/sync', syncRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/rules', rulesRoutes);
 app.use('/api/jobs', jobsRoutes);
+app.use('/api/logs', logsRoutes);
+app.use('/api/abebooks', abebooksRoutes);
 
 // Durable job runner (retries + backoff)
 const jobRunner = require('./jobs/runner');

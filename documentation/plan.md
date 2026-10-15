@@ -55,6 +55,7 @@ Existing 5 tables stay; changes below.
 - `platform` enum becomes: `ebay`, `etsy`, `abebooks`.
 - For AbeBooks rows: `status` = `draft` (generated, not yet exported), `exported` (included in last export file), `sold`, `error`, `delisted`. `platform_url` stays null; add `last_exported_at`.
 - Add `external_price` (renamed from `platform_price` in code only if convenient — no data migration needed yet).
+- Add `notes` + `title_override` (v3): panel-owned per-platform content. The main description always comes from `products.description` (Shopify truth); these fields are composed in at listing/export time. Every change is journaled into `product_changes` scoped to the platform.
 
 ### `sync_rules`
 - Keep structure. Add per-platform defaults seeded on first run:
@@ -65,6 +66,16 @@ Existing 5 tables stay; changes below.
 
 ### `sync_logs`
 - Keep. Add `platform` value `abebooks` for export operations.
+
+### `product_changes` (v4 — versioning overlay)
+- Field-level audit trail grouped by `change_id` (one save = one entry). All versions of a book hang off the single `products.id` a Shopify sync creates.
+- `platform` column scopes each entry: `NULL` = base product data, `ebay`/`abebooks`/`etsy` = that platform's listing fields.
+- `run_id` column links sync-source entries to the sync run that produced them (the `sync_logs` row id doubles as the run id). Manual entries have no run.
+- **Base fields (NULL):** the products table is the truth mirror of Shopify; manual edits live only here as an overlay (newest manual value per field wins; falls back to truth when entries are deleted). `sync` entries are an informational record of Shopify-side truth changes.
+- **Platform fields:** values live directly on `platform_listings` (`notes`, `title_override` — no Shopify counterpart); every write is journaled here with the platform set. Deleting an entry peels the field back to the previous version (or clears it).
+- No snapshots, no joins, one table — indexes on `(product_id)`, `(change_id)`, `(product_id, field)`, `(product_id, source)`, `(product_id, platform)`, `(run_id)` keep it cheap at catalog scale. Global history queries paginate at the SQL level (page of `change_id` groups).
+
+**Logs panel (frontend):** universal review surface with two tabs — *Field changes* (filter by scope/platform, source, product title, sync run; per-entry delete with peel-back; guarded bulk purge) and *Sync runs* (from `sync_logs`; each run links to the field changes it produced; per-record delete and guarded purge). Backed by `/api/logs/*` (purges are POST `/purge` with a required filter); per-book history also lives in the product modal's History tab with platform badges.
 
 ### `platform_credentials`
 - Keep. Credentials encrypted at rest (AES-256-GCM, key in `APP_ENCRYPTION_KEY` env var). Never returned to the frontend — only a masked preview + `last_validated_at`.
@@ -99,10 +110,19 @@ Sync rules that depend on metadata (Etsy vintage filter, AbeBooks condition filt
 - Constraints: $0.20 per listing, images required, must comply with Etsy handmade/vintage/craft-supply policy — the `vintage_only` rule keeps the catalog compliant (books 20+ years old).
 - Only list products passing the vintage rule + having images.
 
-### AbeBooks — export channel
-- Panel generates a bulk inventory file (HomeBase-style tab-separated format) for all products with rule-matching + `metadata_status != 'missing'` + not already sold.
-- UI: "Generate AbeBooks export" button → downloads file → you upload via your AbeBooks bookseller account.
-- Listings created this way get `status = 'exported'`; "sold on AbeBooks" is marked manually in the panel (closes the book everywhere like any other sale).
+### AbeBooks — export channel ✅ (generator built)
+- Panel generates a bulk inventory file (tab-separated, HomeBase-style column layout) from products passing the AbeBooks rule. Column set lives in `backend/src/services/listingComposer.js` (BookNo, ISBN, Title, Author, Publisher, Year, Binding, Condition, Price, Qty, Description) — adjust there if the bookseller upload template differs.
+- Listing content is composed by the same module for every channel: `title = title_override || product.title`, `description = Shopify base + platform notes` (plain text for the TSV, sanitized HTML for future channels). BookNo = Shopify variant SKU (captured into `metadata.sku` by the sync) or a stable `AB-<id>` fallback. Condition maps to AbeBooks grades (new→New, like_new→Fine, very_good→Very Good, good→Good, acceptable→Fair).
+- **Export modes:** `full` (all eligible), `delta` (new/changed since each book's last export — never resends an unchanged catalog; any `product_changes` entry newer than `last_exported_at` marks a book pending, with a 1-second look-back guard), and `selection` (explicit picks — overrides rule conditions but never the stock check; blocked reasons surface as warnings).
+- **Preview before download:** rows + skip report via `POST /api/abebooks/export/preview` (no side effects). `POST /api/abebooks/export/generate` returns the file, marks included books `status='exported'` with a fresh `last_exported_at`, and logs the run in `sync_logs` (`action='export'`).
+- UI: "Generate export…" on the AbeBooks view (mode picker, preview table, download) and from the bulk-selection bar in the overview.
+- "Sold on AbeBooks" is marked manually in the panel (closes the book everywhere like any other sale) — still to build.
+- Notes templates: `POST /api/products/notes-template` applies one template (`{title}`, `{author}`, `{year}`, `{condition}`, `{binding}`, `{publisher}`, `{isbn}`, `{price}`, `{sku}` variables) to a selection of books, rendered per book, each saved through the per-platform versioning path.
+
+### Bulk operations (selection framework) ✅
+- Checkbox selection in the overview table (persists across pages/filters) with a bulk action bar: AbeBooks export, notes template.
+- Channel views show a **Readiness card** (rule evaluation over the catalog: eligible count + skip reasons) and the real connection state derived from the credential vault.
+- eBay/Etsy listing pushes (batch jobs with per-item results) arrive with the Phase 3 adapter.
 
 ---
 
@@ -188,7 +208,10 @@ then apply rounding rule (default: round up to X.99)
 - [ ] Logs + error UI; "Needs attention" view
 
 **Phase 4 — AbeBooks export + Etsy**
-- [ ] AbeBooks export file generator + manual sold-marking
+- [x] AbeBooks export file generator: modes (full/delta/selection), preview + skip report, download, export baseline, run logging
+- [x] Listing composition (`listingComposer.js`): title override, notes folding, condition mapping, SKU capture — shared by all channels
+- [x] Bulk selection + notes templates with per-book variables
+- [ ] AbeBooks manual sold-marking flow (closes the book everywhere)
 - [ ] Etsy app approval (apply early in Phase 3), OAuth, adapter, vintage-rule enforcement
 
 **Phase 5 — Automation + polish**

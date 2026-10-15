@@ -73,6 +73,9 @@ try {
     db.exec('DROP TABLE platform_listings');
   }
 
+  // platform_listings: v3 adds per-platform content fields. The main text still
+  // comes from products.description (Shopify truth); notes/title_override are
+  // panel-owned extras composed in at listing/export time.
   db.exec(`
     CREATE TABLE IF NOT EXISTS platform_listings (
       id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -82,6 +85,8 @@ try {
       status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'exported', 'active', 'sold', 'error', 'delisted')),
       external_price REAL,
       platform_url TEXT,
+      notes TEXT,
+      title_override TEXT,
       sync_enabled INTEGER NOT NULL DEFAULT 1,
       last_synced_at DATETIME,
       last_exported_at DATETIME,
@@ -92,7 +97,13 @@ try {
       UNIQUE(product_id, platform)
     )
   `);
-  console.log('✓ platform_listings table ready (v2)');
+  if (!hasColumn('platform_listings', 'notes')) {
+    db.exec('ALTER TABLE platform_listings ADD COLUMN notes TEXT');
+  }
+  if (!hasColumn('platform_listings', 'title_override')) {
+    db.exec('ALTER TABLE platform_listings ADD COLUMN title_override TEXT');
+  }
+  console.log('✓ platform_listings table ready (v3: notes/title_override)');
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_listings_product ON platform_listings(product_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_listings_platform ON platform_listings(platform)`);
@@ -167,24 +178,44 @@ try {
   // local value (falls back to the truth value when entries are deleted).
   // 'sync' entries are an informational record of Shopify-side truth changes.
   // Deleting a 'manual' entry peels that edit back to the previous value or truth.
+  //
+  // v3 adds the platform dimension: NULL = base product data (Shopify-truth
+  // overlay), 'ebay'/'abebooks'/'etsy' = a change to that platform's own listing
+  // fields (notes, title_override) stored on platform_listings. Every version of
+  // every book hangs off the single product id; platforms just scope the field.
+  // v4 adds run_id: sync entries are stamped with the id of the sync run that
+  // produced them (the sync_logs row id), linking the operational run log to
+  // the individual field changes it made.
   db.exec(`
     CREATE TABLE IF NOT EXISTS product_changes (
       id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
       change_id TEXT NOT NULL,
       product_id TEXT NOT NULL,
+      platform TEXT CHECK(platform IS NULL OR platform IN ('ebay', 'abebooks', 'etsy')),
       field TEXT NOT NULL,
       old_value TEXT,
       new_value TEXT,
       source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'sync')),
+      run_id TEXT,
       changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     )
   `);
-  console.log('✓ product_changes table ready');
+  if (hasTable('product_changes') && !hasColumn('product_changes', 'platform')) {
+    db.exec(
+      "ALTER TABLE product_changes ADD COLUMN platform TEXT CHECK(platform IS NULL OR platform IN ('ebay', 'abebooks', 'etsy'))"
+    );
+  }
+  if (hasTable('product_changes') && !hasColumn('product_changes', 'run_id')) {
+    db.exec('ALTER TABLE product_changes ADD COLUMN run_id TEXT');
+  }
+  console.log('✓ product_changes table ready (v4: platform dimension + run linkage)');
   db.exec(`CREATE INDEX IF NOT EXISTS idx_changes_product ON product_changes(product_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_changes_change ON product_changes(change_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_changes_product_field ON product_changes(product_id, field)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_changes_manual_fields ON product_changes(product_id, source)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_changes_product_platform ON product_changes(product_id, platform)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_changes_run ON product_changes(run_id)`);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS platform_credentials (

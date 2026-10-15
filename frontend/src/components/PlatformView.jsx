@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getListing, getListingStatus } from '../platforms';
 import { getPageNumbers } from '../pagination';
+import { rulesAPI } from '../api';
+import ExportDialog from './ExportDialog';
 import {
   SearchIcon,
   BookIcon,
@@ -10,7 +12,14 @@ import {
 } from './icons';
 import './PlatformView.css';
 
-export default function PlatformView({ platform, products, facets, onProductClick }) {
+export default function PlatformView({
+  platform,
+  products,
+  facets,
+  onProductClick,
+  connected,
+  onProductsChanged,
+}) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [tagFilter, setTagFilter] = useState('all');
@@ -18,6 +27,26 @@ export default function PlatformView({ platform, products, facets, onProductClic
   const [vendorFilter, setVendorFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
+  const [readiness, setReadiness] = useState(null);
+  const [showExport, setShowExport] = useState(false);
+
+  const isAbebooks = platform.id === 'abebooks';
+  const isConnected = connected !== undefined ? connected : platform.connected;
+
+  // Readiness: rule evaluation over the whole catalog — how many books would
+  // list here today, and what blocks the rest. The pre-flight report.
+  useEffect(() => {
+    let cancelled = false;
+    rulesAPI
+      .preview(platform.id)
+      .then((res) => {
+        if (!cancelled) setReadiness(res.data);
+      })
+      .catch(() => setReadiness(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [platform.id, products.length]);
 
   const stats = useMemo(() => {
     let listed = 0;
@@ -96,18 +125,39 @@ export default function PlatformView({ platform, products, facets, onProductClic
           <h1 className="page-title">{platform.name}</h1>
           <p className="page-desc">{platform.description}</p>
         </div>
-        <span className={`connection-badge ${platform.connected ? 'connected' : 'disconnected'}`}>
-          <span className="connection-dot" />
-          {platform.connected ? 'Connected' : 'Not connected'}
-        </span>
+        <div className="page-head-actions">
+          {isAbebooks && (
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowExport(true)}
+              title="Compose a bulk-upload file from the eligible catalog"
+            >
+              Generate export…
+            </button>
+          )}
+          <span className={`connection-badge ${isConnected ? 'connected' : 'disconnected'}`}>
+            <span className="connection-dot" />
+            {isConnected ? 'Connected' : 'Not connected'}
+          </span>
+        </div>
       </div>
 
-      {!platform.connected && (
+      {isAbebooks && (
         <div className="alert alert-info">
           <InfoIcon size={17} />
           <div className="alert-msg">
-            API credentials are not set yet. You can review inventory here — listing, update, and
-            delist actions unlock after connecting {platform.name}.
+            AbeBooks is an export-file channel: the panel composes a bulk-upload file, you upload it via your
+            bookseller account. No API connection needed — use "Generate export".
+          </div>
+        </div>
+      )}
+
+      {!isAbebooks && !isConnected && (
+        <div className="alert alert-info">
+          <InfoIcon size={17} />
+          <div className="alert-msg">
+            API credentials are not set yet. You can review inventory and readiness here — listing actions
+            unlock after connecting {platform.name} (Phase 3).
           </div>
         </div>
       )}
@@ -142,6 +192,24 @@ export default function PlatformView({ platform, products, facets, onProductClic
           <div className="stat-number">{stats.errors}</div>
         </div>
       </div>
+
+      {readiness && (
+        <div className="readiness-card">
+          <div className="readiness-head">
+            <h3 className="rules-title">Readiness</h3>
+            <span className="readiness-number">
+              <strong>{readiness.summary.eligible}</strong> of {readiness.summary.total} books eligible
+            </span>
+          </div>
+          <div className="readiness-reasons">
+            {Object.entries(readiness.summary.skipped).map(([reason, count]) => (
+              <span key={reason} className="readiness-reason-chip" title={reason}>
+                {reason} · {count}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="rules-card">
         <h3 className="rules-title">Sync rules</h3>
@@ -281,7 +349,14 @@ export default function PlatformView({ platform, products, facets, onProductClic
                             </div>
                           )}
                         </td>
-                        <td className="product-title">{product.title}</td>
+                         <td className="product-title">
+                           {product.title}
+                           {listing?.notes && (
+                             <span className="notes-chip" title={listing.notes}>
+                               ✎ notes
+                             </span>
+                           )}
+                         </td>
                         <td>{product.isbn ? <span className="mono">{product.isbn}</span> : '—'}</td>
                         <td className="price">${parseFloat(product.price).toFixed(2)}</td>
                         <td className="price">
@@ -356,6 +431,13 @@ export default function PlatformView({ platform, products, facets, onProductClic
           </>
         )}
       </div>
+
+      {showExport && (
+        <ExportDialog
+          onClose={() => setShowExport(false)}
+          onExported={() => onProductsChanged && onProductsChanged()}
+        />
+      )}
     </div>
   );
 }

@@ -29,6 +29,27 @@ export const productsAPI = {
   getChanges: (id, limit) => api.get(`/products/${id}/changes`, { params: { limit } }),
   deleteChange: (id, changeId) => api.delete(`/products/${id}/changes/${changeId}`),
   resetLocalEdits: (id) => api.delete(`/products/${id}/local-edits`),
+  // Per-platform listing fields (notes, title_override) — versioned per platform
+  updateListingFields: (id, platform, data) => api.put(`/products/${id}/listings/${platform}/fields`, data),
+  // Bulk-apply a notes template ({title}, {author}, …) to a selection of books
+  applyNotesTemplate: (productIds, platform, template) =>
+    api.post('/products/notes-template', { product_ids: productIds, platform, template }),
+};
+
+// AbeBooks export-file channel (no live API: preview + generate TSV)
+export const abebooksAPI = {
+  exportPreview: (data) => api.post('/abebooks/export/preview', data),
+  exportGenerate: (data) => api.post('/abebooks/export/generate', data),
+};
+
+// Universal logs (change history + sync runs) for the Logs panel
+export const logsAPI = {
+  getChanges: (params) => api.get('/logs/changes', { params }),
+  deleteChange: (productId, changeId) => api.delete(`/logs/changes/${productId}/${changeId}`),
+  purgeChanges: (data) => api.post('/logs/changes/purge', data),
+  getSyncLogs: (params) => api.get('/logs/sync', { params }),
+  deleteSyncLog: (id) => api.delete(`/logs/sync/${id}`),
+  purgeSyncLogs: (data) => api.post('/logs/sync/purge', data),
 };
 
 // Sync API

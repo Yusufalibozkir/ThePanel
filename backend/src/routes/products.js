@@ -28,4 +28,10 @@ router.get('/:id/changes', productController.getChanges);
 router.delete('/:id/changes/:changeId', productController.deleteChange);
 router.delete('/:id/local-edits', productController.resetLocalEdits);
 
+// Per-platform listing fields (notes, title_override) — versioned per platform
+router.put('/:id/listings/:platform/fields', productController.updateListingFields);
+
+// Bulk-apply a notes template to a selection ({ product_ids, platform, template })
+router.post('/notes-template', productController.applyNotesTemplate);
+
 module.exports = router;

@@ -10,12 +10,21 @@ const { db } = require('../config/database');
 // arrive with the Phase 3/4 adapters; the foundation ones live here.
 
 jobRunner.registerHandler('sync_shopify', async () => {
+  const runId = syncLogService.newRunId();
   const result = await shopifyService.getProducts(250);
   if (!result.success) {
+    await syncLogService.createLog({
+      id: runId,
+      platform: 'shopify',
+      action: 'sync',
+      status: 'failed',
+      error_message: result.message,
+    });
     throw new Error(`shopify fetch failed: ${result.message}`);
   }
-  const sync = await productService.syncProductsFromShopify(result.products);
+  const sync = await productService.syncProductsFromShopify(result.products, { runId });
   await syncLogService.createLog({
+    id: runId,
     platform: 'shopify',
     action: 'sync',
     status: sync.errors.length > 0 ? 'failed' : 'success',

@@ -1,0 +1,114 @@
+.notes-dialog {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  max-width: 640px;
+  width: 100%;
+  max-height: 90vh;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+.notes-dialog .form-group textarea {
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--paper-soft);
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--ink);
+  resize: vertical;
+  min-height: 90px;
+  width: 100%;
+}
+
+.notes-dialog .form-group textarea:focus {
+  outline: none;
+  border-color: var(--brass);
+  background: var(--paper);
+  box-shadow: var(--ring);
+}
+
+.notes-platform-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.notes-platform-chip {
+  border: 1px solid var(--line-strong);
+  background: var(--paper-soft);
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+
+.notes-platform-chip:hover {
+  color: var(--ink);
+  border-color: var(--brass);
+}
+
+.notes-platform-chip.active {
+  background: rgba(176, 141, 87, 0.14);
+  color: var(--brass-deep, #8a6d3b);
+  border-color: var(--brass);
+}
+
+.notes-variables {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.notes-variables-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  margin-right: 4px;
+}
+
+.notes-var-chip {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--brass-deep, #8a6d3b);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  padding: 3px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.notes-var-chip:hover {
+  border-color: var(--brass);
+  background: rgba(176, 141, 87, 0.08);
+}
+
+.notes-preview {
+  padding: 12px 14px;
+  background: var(--paper-soft);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--brass);
+  border-radius: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.notes-preview-text {
+  font-size: 13.5px;
+  color: var(--ink);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -36,10 +36,12 @@ testDb.exec(`
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     change_id TEXT NOT NULL,
     product_id TEXT NOT NULL,
+    platform TEXT,
     field TEXT NOT NULL,
     old_value TEXT,
     new_value TEXT,
     source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'sync')),
+    run_id TEXT,
     changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
   );
@@ -265,6 +267,100 @@ test('create normalizes object images/metadata and missing shopify id', async ()
   assert.equal(created.quantity, 2);
   assert.deepEqual(created.images, ['https://example.com/a.jpg']);
   assert.equal(created.metadata.vendor, 'Acme');
+});
+
+test('sync run id stamps entries and filters global history by run', async () => {
+  const rowA = insertProduct({ shopify_product_id: 'run-a', price: 10 });
+  const rowB = insertProduct({ shopify_product_id: 'run-b', price: 10 });
+
+  await productService.syncProductsFromShopify(
+    [
+      {
+        id: 'run-a',
+        title: 'The Hobbit',
+        body_html: '<p>a</p>',
+        tags: [],
+        images: [],
+        variants: [{ price: '11.00', inventory_quantity: 1 }],
+      },
+    ],
+    { enrich: false, runId: 'run-111' }
+  );
+  await productService.syncProductsFromShopify(
+    [
+      {
+        id: 'run-b',
+        title: 'The Hobbit',
+        body_html: '<p>b</p>',
+        tags: [],
+        images: [],
+        variants: [{ price: '12.00', inventory_quantity: 1 }],
+      },
+    ],
+    { enrich: false, runId: 'run-222' }
+  );
+
+  const byRunA = changeLogService.getAllHistory({ runId: 'run-111' });
+  assert.equal(byRunA.total, 1);
+  assert.equal(byRunA.entries[0].run_id, 'run-111');
+  assert.equal(byRunA.entries[0].source, 'sync');
+  assert.equal(byRunA.entries[0].product_id, rowA.id);
+
+  const byRunB = changeLogService.getAllHistory({ runId: 'run-222' });
+  assert.equal(byRunB.total, 1);
+  assert.equal(byRunB.entries[0].product_id, rowB.id);
+
+  // manual entries carry no run id
+  await productService.applyEdit(rowA.id, { price: 99 });
+  const manual = changeLogService.getHistory(rowA.id).find((e) => e.source === 'manual');
+  assert.equal(manual.run_id, null);
+});
+
+test('getAllHistory pages entries at the SQL level', async () => {
+  for (let i = 0; i < 5; i++) {
+    const row = insertProduct({ shopify_product_id: `pg-${i}`, title: `Page Book ${i}` });
+    await productService.applyEdit(row.id, { price: 20 + i });
+  }
+
+  const page1 = changeLogService.getAllHistory({ search: 'Page Book', limit: 2, offset: 0 });
+  assert.equal(page1.total, 5);
+  assert.equal(page1.entries.length, 2);
+
+  const page2 = changeLogService.getAllHistory({ search: 'Page Book', limit: 2, offset: 2 });
+  assert.equal(page2.entries.length, 2);
+
+  const page3 = changeLogService.getAllHistory({ search: 'Page Book', limit: 2, offset: 4 });
+  assert.equal(page3.entries.length, 1);
+
+  // no overlap, all 5 covered, newest insert first
+  const titles = [...page1.entries, ...page2.entries, ...page3.entries].map((e) => e.product_title);
+  assert.deepEqual(titles, ['Page Book 4', 'Page Book 3', 'Page Book 2', 'Page Book 1', 'Page Book 0']);
+});
+
+test('purge supports the run_id scope', async () => {
+  const row = insertProduct({ shopify_product_id: 'purge-run', price: 10 });
+  await productService.syncProductsFromShopify(
+    [
+      {
+        id: 'purge-run',
+        title: 'The Hobbit',
+        body_html: '<p>changed</p>',
+        tags: [],
+        images: [],
+        variants: [{ price: '13.00', inventory_quantity: 1 }],
+      },
+    ],
+    { enrich: false, runId: 'purge-run-1' }
+  );
+
+  const before = changeLogService.getAllHistory({ runId: 'purge-run-1' });
+  assert.equal(before.total, 1);
+
+  const purged = changeLogService.purgeEntries({ runId: 'purge-run-1' });
+  assert.equal(purged.deleted_rows > 0, true);
+
+  const after = changeLogService.getAllHistory({ runId: 'purge-run-1' });
+  assert.equal(after.total, 0);
 });
 
 after(() => {

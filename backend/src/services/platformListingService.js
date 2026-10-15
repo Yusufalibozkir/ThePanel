@@ -1,32 +1,87 @@
 const { query } = require('../config/database');
+const changeLogService = require('./changeLogService');
+
+// Panel-owned per-platform content fields. The main text still comes from the
+// product (Shopify truth); these are extras composed in at listing/export time.
+const PLATFORM_FIELDS = ['notes', 'title_override'];
+const VALID_PLATFORMS = new Set(['ebay', 'abebooks', 'etsy']);
 
 class PlatformListingService {
-  // Create or update the listing row for a product+platform pair
-  async upsertListing(listingData) {
-    const existing = this.getListingByPlatform(listingData.product_id, listingData.platform);
-    if (existing) {
-      query(
-        `UPDATE platform_listings
-         SET platform_listing_id = ?, status = ?, external_price = ?, platform_url = ?,
-             sync_enabled = ?, error_message = ?
-         WHERE id = ?`,
-        [
-          listingData.platform_listing_id ?? existing.platform_listing_id,
-          listingData.status || existing.status,
-          listingData.external_price ?? existing.external_price,
-          listingData.platform_url ?? existing.platform_url,
-          listingData.sync_enabled !== undefined ? (listingData.sync_enabled ? 1 : 0) : existing.sync_enabled,
-          listingData.error_message ?? null,
-          existing.id,
-        ]
-      );
-      return this.getListingByPlatform(listingData.product_id, listingData.platform);
+  // Save per-platform content fields (notes, title_override). The values are
+  // written directly to platform_listings — they have no Shopify counterpart —
+  // and every change is journaled into product_changes scoped to the platform,
+  // so each save is a version hanging off the same book id.
+  savePlatformFields(productId, platform, data = {}) {
+    if (!VALID_PLATFORMS.has(platform)) {
+      throw new Error(`Invalid platform: ${platform}`);
     }
-    return this.createListing(listingData);
+
+    let existing = this.getListingByPlatform(productId, platform);
+    if (!existing) {
+      this.createListing({ product_id: productId, platform, status: 'draft' });
+      existing = this.getListingByPlatform(productId, platform);
+    }
+
+    const changes = [];
+    const updates = {};
+    for (const field of PLATFORM_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(data, field)) continue;
+      const raw = data[field];
+      const newValue = raw === null || raw === undefined || String(raw).trim() === '' ? null : String(raw);
+      const oldValue = existing[field] ?? null;
+      if (newValue !== oldValue) {
+        changes.push({ field, oldValue, newValue });
+        updates[field] = newValue;
+      }
+    }
+
+    if (changes.length > 0) {
+      const setSql = Object.keys(updates)
+        .map((f) => `${f} = ?`)
+        .join(', ');
+      query(`UPDATE platform_listings SET ${setSql} WHERE id = ?`, [
+        ...Object.values(updates),
+        existing.id,
+      ]);
+      changeLogService.record(productId, 'manual', changes, platform);
+    }
+
+    return this.getListingByPlatform(productId, platform);
+  }
+
+  // Delete a platform-scoped history entry and peel the fields back to the
+  // previous version (or null when no earlier version remains), mirroring the
+  // base overlay semantics.
+  deletePlatformChangeEntry(productId, changeId) {
+    const entry = changeLogService.getEntry(productId, changeId);
+    if (!entry || !entry.platform) return null;
+
+    changeLogService.deleteEntry(productId, changeId);
+    const fields = [...new Set(entry.changes.map((c) => c.field))];
+    for (const field of fields) {
+      const previous = query(
+        `SELECT new_value FROM product_changes
+         WHERE product_id = ? AND platform = ? AND field = ? AND source = 'manual'
+         ORDER BY changed_at DESC, rowid DESC LIMIT 1`,
+        [productId, entry.platform, field]
+      ).rows[0];
+
+      if (PLATFORM_FIELDS.includes(field)) {
+        query(`UPDATE platform_listings SET ${field} = ? WHERE product_id = ? AND platform = ?`, [
+          previous ? previous.new_value : null,
+          productId,
+          entry.platform,
+        ]);
+      }
+    }
+    return entry;
   }
 
   // Create a new platform listing
-  async createListing(listingData) {
+  // Note: the read helpers below are intentionally synchronous (query() is
+  // sync) — `async` without awaiting anything returns Promises and breaks
+  // non-awaited callers.
+  createListing(listingData) {
     const sql = `
       INSERT INTO platform_listings (
         product_id, platform, platform_listing_id, status,
@@ -48,7 +103,7 @@ class PlatformListingService {
     return this.getListingsByProductId(listingData.product_id);
   }
 
-  async getAll() {
+  getAll() {
     const result = query('SELECT * FROM platform_listings');
     return result.rows.map(row => ({
       ...row,
@@ -57,7 +112,7 @@ class PlatformListingService {
   }
 
   // Get all listings for a product
-  async getListingsByProductId(productId) {
+  getListingsByProductId(productId) {
     const result = query('SELECT * FROM platform_listings WHERE product_id = ?', [productId]);
     return result.rows.map(row => ({
       ...row,
@@ -66,7 +121,7 @@ class PlatformListingService {
   }
 
   // Get listing by platform and product
-  async getListingByPlatform(productId, platform) {
+  getListingByPlatform(productId, platform) {
     const result = query(
       'SELECT * FROM platform_listings WHERE product_id = ? AND platform = ?',
       [productId, platform]
