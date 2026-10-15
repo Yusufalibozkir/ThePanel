@@ -7,6 +7,9 @@ import MetadataReview from './components/MetadataReview';
 import LogsPanel from './components/LogsPanel';
 import ExportDialog from './components/ExportDialog';
 import NotesTemplateDialog from './components/NotesTemplateDialog';
+import RepriceDialog from './components/RepriceDialog';
+import SyncStatusCard from './components/SyncStatusCard';
+import GettingStarted from './components/GettingStarted';
 import { PLATFORMS } from './platforms';
 import logo from './assets/logo.png';
 import { getPageNumbers } from './pagination';
@@ -63,6 +66,7 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showNotesDialog, setShowNotesDialog] = useState(false);
+  const [showRepriceDialog, setShowRepriceDialog] = useState(false);
   // Channel connection state, derived from the credential vault (a platform
   // with stored credentials counts as connected for UI purposes)
   const [connectedPlatforms, setConnectedPlatforms] = useState({});
@@ -423,6 +427,14 @@ export default function App() {
                 </div>
               </div>
 
+              <SyncStatusCard onOpenAttention={() => setActiveTab('metadata')} />
+
+              <GettingStarted
+                products={products}
+                connectedPlatforms={connectedPlatforms}
+                onNavigate={(tab) => setActiveTab(tab)}
+              />
+
               <div className="stats">
                 <div className="stat-card">
                   <div className="stat-label">
@@ -547,6 +559,13 @@ export default function App() {
                     <div className="bulk-actions">
                       <button className="btn btn-secondary btn-small" onClick={() => setShowNotesDialog(true)}>
                         Notes template…
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-small"
+                        onClick={() => setShowRepriceDialog(true)}
+                        title="Adjust prices of the selected books (local overrides, Shopify truth untouched)"
+                      >
+                        Reprice…
                       </button>
                       <button
                         className="btn btn-primary btn-small"
@@ -759,6 +778,14 @@ export default function App() {
               productIds={selectedIdList}
               products={products}
               onClose={() => setShowNotesDialog(false)}
+              onApplied={fetchProducts}
+            />
+          )}
+
+          {showRepriceDialog && (
+            <RepriceDialog
+              productIds={selectedIdList}
+              onClose={() => setShowRepriceDialog(false)}
               onApplied={fetchProducts}
             />
           )}

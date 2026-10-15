@@ -73,16 +73,19 @@ try {
     db.exec('DROP TABLE platform_listings');
   }
 
-  // platform_listings: v3 adds per-platform content fields. The main text still
-  // comes from products.description (Shopify truth); notes/title_override are
-  // panel-owned extras composed in at listing/export time.
+  // platform_listings: v3 adds per-platform content fields; v4 adds the
+  // transient 'publishing' status (a job owns the listing between "publish
+  // clicked" and "channel API confirmed" — learned from competitor UX where
+  // in-flight pushes are invisible). The main text still comes from
+  // products.description (Shopify truth); notes/title_override are panel-owned
+  // extras composed in at listing/export time.
   db.exec(`
     CREATE TABLE IF NOT EXISTS platform_listings (
       id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
       product_id TEXT NOT NULL,
       platform TEXT NOT NULL CHECK(platform IN ('ebay', 'abebooks', 'etsy')),
       platform_listing_id TEXT,
-      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'exported', 'active', 'sold', 'error', 'delisted')),
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'publishing', 'exported', 'active', 'sold', 'error', 'delisted')),
       external_price REAL,
       platform_url TEXT,
       notes TEXT,
@@ -103,7 +106,63 @@ try {
   if (!hasColumn('platform_listings', 'title_override')) {
     db.exec('ALTER TABLE platform_listings ADD COLUMN title_override TEXT');
   }
-  console.log('✓ platform_listings table ready (v3: notes/title_override)');
+
+  // v4: extend the status CHECK with 'publishing'. SQLite can't ALTER a CHECK,
+  // so rebuild via rename+copy (same pattern as sync_logs; every old value is
+  // valid in the new constraint, so rows carry over unchanged).
+  const listingsV3 =
+    hasTable('platform_listings') &&
+    !db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'platform_listings'")
+      .get()
+      .sql.includes("'publishing'");
+
+  if (listingsV3) {
+    db.exec('DROP TRIGGER IF EXISTS update_listings_timestamp');
+    db.exec('ALTER TABLE platform_listings RENAME TO platform_listings_v3');
+    db.exec(`
+      CREATE TABLE platform_listings (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        product_id TEXT NOT NULL,
+        platform TEXT NOT NULL CHECK(platform IN ('ebay', 'abebooks', 'etsy')),
+        platform_listing_id TEXT,
+        status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'publishing', 'exported', 'active', 'sold', 'error', 'delisted')),
+        external_price REAL,
+        platform_url TEXT,
+        notes TEXT,
+        title_override TEXT,
+        sync_enabled INTEGER NOT NULL DEFAULT 1,
+        last_synced_at DATETIME,
+        last_exported_at DATETIME,
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+        UNIQUE(product_id, platform)
+      )
+    `);
+    db.exec(`
+      INSERT INTO platform_listings
+        (id, product_id, platform, platform_listing_id, status, external_price,
+         platform_url, notes, title_override, sync_enabled, last_synced_at,
+         last_exported_at, error_message, created_at, updated_at)
+      SELECT
+        id, product_id, platform, platform_listing_id, status, external_price,
+        platform_url, notes, title_override, sync_enabled, last_synced_at,
+        last_exported_at, error_message, created_at, updated_at
+      FROM platform_listings_v3
+    `);
+    db.exec('DROP TABLE platform_listings_v3');
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS update_listings_timestamp
+      AFTER UPDATE ON platform_listings
+      BEGIN
+        UPDATE platform_listings SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END
+    `);
+    console.log('✓ platform_listings rebuilt with publishing status (v4, rows preserved)');
+  }
+  console.log('✓ platform_listings table ready (v4: publishing status)');
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_listings_product ON platform_listings(product_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_listings_platform ON platform_listings(platform)`);
@@ -117,10 +176,20 @@ try {
       conditions TEXT DEFAULT '{}',
       price_modifier TEXT DEFAULT '{}',
       auto_sync INTEGER NOT NULL DEFAULT 0,
+      price_push INTEGER NOT NULL DEFAULT 1,
+      stock_push INTEGER NOT NULL DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  // v5: per-feature push switches (price vs stock can be pushed independently
+  // per platform — the sync enablement matrix every multichannel tool exposes).
+  if (!hasColumn('sync_rules', 'price_push')) {
+    db.exec('ALTER TABLE sync_rules ADD COLUMN price_push INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!hasColumn('sync_rules', 'stock_push')) {
+    db.exec('ALTER TABLE sync_rules ADD COLUMN stock_push INTEGER NOT NULL DEFAULT 1');
+  }
 
   const seedRule = db.prepare(`
     INSERT OR IGNORE INTO sync_rules (platform, enabled, conditions, price_modifier) VALUES (?, 0, ?, ?)
@@ -232,7 +301,7 @@ try {
   db.exec(`
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-      type TEXT NOT NULL CHECK(type IN ('list', 'update', 'end_listing', 'sync_shopify', 'export_abebooks', 'backfill_metadata')),
+      type TEXT NOT NULL CHECK(type IN ('list', 'update', 'end_listing', 'sync_shopify', 'export_abebooks', 'backfill_metadata', 'mark_sold', 'update_shopify_inventory')),
       payload TEXT DEFAULT '{}',
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'done', 'failed')),
       attempts INTEGER NOT NULL DEFAULT 0,
@@ -243,9 +312,95 @@ try {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_next ON jobs(status, next_run_at)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(type)`);
+
+  // v5: extend the jobs type CHECK with the W3 fan-out types. Rebuild via
+  // rename+copy (old values are all valid in the new constraint).
+  const jobsV4 =
+    hasTable('jobs') &&
+    !db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'")
+      .get()
+      .sql.includes("'mark_sold'");
+
+  if (jobsV4) {
+    db.exec('DROP TRIGGER IF EXISTS update_jobs_timestamp');
+    db.exec('ALTER TABLE jobs RENAME TO jobs_v4');
+    db.exec(`
+      CREATE TABLE jobs (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        type TEXT NOT NULL CHECK(type IN ('list', 'update', 'end_listing', 'sync_shopify', 'export_abebooks', 'backfill_metadata', 'mark_sold', 'update_shopify_inventory')),
+        payload TEXT DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'done', 'failed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 3,
+        next_run_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_error TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    db.exec(`
+      INSERT INTO jobs (id, type, payload, status, attempts, max_attempts, next_run_at, last_error, created_at, updated_at)
+      SELECT id, type, payload, status, attempts, max_attempts, next_run_at, last_error, created_at, updated_at
+      FROM jobs_v4
+    `);
+    db.exec('DROP TABLE jobs_v4');
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS update_jobs_timestamp
+      AFTER UPDATE ON jobs
+      BEGIN
+        UPDATE jobs SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+      END
+    `);
+    console.log('✓ jobs table rebuilt with W3 fan-out types (rows preserved)');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_status_next ON jobs(status, next_run_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(type)');
   console.log('✓ jobs table ready');
+
+  // channel_orders: W3 sale idempotency. A channel order closes a book exactly
+  // once — double-reported sales (webhook + poll, retry, manual re-mark) must
+  // never rewrite sold_at or re-fan-out. (Failure mode F-2/F-7 in the
+  // competitor deep dive: every overselling incident traces to missing
+  // exactly this table.)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS channel_orders (
+      platform TEXT NOT NULL,
+      external_order_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      closed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (platform, external_order_id),
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_channel_orders_product ON channel_orders(product_id)');
+  console.log('✓ channel_orders table ready (W3 idempotency)');
+
+  // panel_state: tiny key/value store for operational state (sync scheduler's
+  // next_run_at etc.) that must survive restarts but isn't user data.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS panel_state (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  console.log('✓ panel_state table ready (scheduler state)');
+
+  // presets: named, reusable flow configurations (export modes, push options) —
+  // every guided flow leaves behind reusable config (competitor pattern C-5).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS presets (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      payload TEXT NOT NULL DEFAULT '{}',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(name, kind)
+    )
+  `);
+  console.log('✓ presets table ready');
 
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS update_products_timestamp

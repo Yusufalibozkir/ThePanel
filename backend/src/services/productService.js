@@ -508,20 +508,55 @@ class ProductService {
     return this.getById(id);
   }
 
-  // Single-copy sale flow: sold_at/sold_via are local-only truth; the quantity
-  // drop is recorded as a manual overlay so it stays visible while Shopify
-  // keeps refreshing the truth quantity.
-  async markSold(id, soldVia) {
+  // Single-copy sale flow (W3 "closeBook"): sold_at/sold_via are local-only
+  // truth; the quantity drop is recorded as a manual overlay so it stays
+  // visible while Shopify keeps refreshing the truth quantity.
+  //
+  // Idempotency: when the caller supplies a channel order id, the
+  // channel_orders table guarantees one order closes a book exactly once —
+  // double-reported sales (webhook + poll, retry, manual re-mark) never
+  // rewrite sold_at or re-journal. First sale wins; later reports for other
+  // platforms still record their order id but don't touch the closure.
+  async markSold(id, soldVia, { platform = null, externalOrderId = null } = {}) {
     const truthRow = this.getTruthById(id);
     if (!truthRow) return null;
 
-    query('UPDATE products SET sold_at = CURRENT_TIMESTAMP, sold_via = ? WHERE id = ?', [soldVia, id]);
-
-    const overrides = changeLogService.getOverrides(id);
-    const effectiveQty = overrides.has('quantity') ? overrides.get('quantity') : truthRow.quantity;
-    if (Number(effectiveQty) !== 0) {
-      changeLogService.record(id, 'manual', [{ field: 'quantity', oldValue: effectiveQty, newValue: 0 }]);
+    if (platform && externalOrderId) {
+      const seen = query(
+        'SELECT product_id FROM channel_orders WHERE platform = ? AND external_order_id = ?',
+        [platform, String(externalOrderId)]
+      ).rows[0];
+      if (seen) {
+        return { ...this.getById(id), already_closed: true };
+      }
+      query(
+        'INSERT INTO channel_orders (platform, external_order_id, product_id) VALUES (?, ?, ?)',
+        [platform, String(externalOrderId), id]
+      );
     }
+
+    if (!truthRow.sold_at) {
+      query('UPDATE products SET sold_at = CURRENT_TIMESTAMP, sold_via = ? WHERE id = ?', [
+        soldVia || platform || 'manual',
+        id,
+      ]);
+
+      const overrides = changeLogService.getOverrides(id);
+      const effectiveQty = overrides.has('quantity') ? overrides.get('quantity') : truthRow.quantity;
+      if (Number(effectiveQty) !== 0) {
+        changeLogService.record(id, 'manual', [{ field: 'quantity', oldValue: effectiveQty, newValue: 0 }]);
+      }
+    }
+
+    // Close every live listing for this book. This is the data half of the
+    // closeBook fan-out; the eBay/Etsy end-listing API jobs (end_listing,
+    // update_shopify_inventory) are queued by the channel adapters when they
+    // land in Phase 3/4 — the runner has no handlers for them yet.
+    query(
+      `UPDATE platform_listings SET status = 'sold'
+       WHERE product_id = ? AND status IN ('draft', 'publishing', 'active', 'exported')`,
+      [id]
+    );
 
     return this.getById(id);
   }

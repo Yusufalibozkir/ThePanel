@@ -2,6 +2,7 @@ const productService = require('../services/productService');
 const platformListingService = require('../services/platformListingService');
 const changeLogService = require('../services/changeLogService');
 const { applyTemplate } = require('../services/listingComposer');
+const repriceService = require('../services/repriceService');
 
 // Distinct filterable values (tags, categories, vendor, ...) with counts
 const getFacets = async (req, res) => {
@@ -286,18 +287,51 @@ const deleteProduct = async (req, res) => {
   }
 };
 
-// Mark product sold via a platform (or shopify). Single-copy model.
+// Mark product sold via a platform (or shopify). Single-copy model — closes
+// the book everywhere (W3). Idempotent when a channel order id is supplied.
 const markSold = async (req, res) => {
   try {
-    const soldVia = req.body?.sold_via || 'manual';
-    const product = await productService.markSold(req.params.id, soldVia);
+    const platform = req.body?.platform || null;
+    const soldVia = req.body?.sold_via || platform || 'manual';
+    const externalOrderId = req.body?.external_order_id || null;
+
+    if (platform && !['ebay', 'etsy', 'abebooks', 'shopify'].includes(platform)) {
+      return res.status(400).json({ success: false, message: 'Invalid platform' });
+    }
+
+    const product = await productService.markSold(req.params.id, soldVia, {
+      platform,
+      externalOrderId,
+    });
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
-    // Phase 3: queue end_listing jobs for other active listings here (W3)
-    res.json({ success: true, message: 'Product marked sold', product });
+    res.json({
+      success: true,
+      message: product.already_closed ? 'Sale already recorded' : 'Product marked sold',
+      product,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Bulk reprice (PricePartner): { product_ids, mode: percent|amount|set,
+// value, dry_run }. Applies local price overrides — Shopify truth untouched,
+// every change journaled and peelable per book.
+const reprice = async (req, res) => {
+  try {
+    const { product_ids, mode, value, dry_run } = req.body || {};
+    const result = await repriceService.reprice(product_ids, mode, value, { dryRun: Boolean(dry_run) });
+    res.json({
+      success: true,
+      dry_run: result.dry_run,
+      applied: result.applied,
+      skipped: result.skipped,
+      rows: result.rows,
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -314,4 +348,5 @@ module.exports = {
   resetLocalEdits,
   updateListingFields,
   applyNotesTemplate,
+  reprice,
 };

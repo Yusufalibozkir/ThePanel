@@ -4,7 +4,7 @@
 //   then apply rounding rule (default: round up to X.99)
 //
 // Guardrails: never list below min_price; skip (with reason) if the computed
-// price is below cost.
+// price is below cost or above max_price.
 
 const ROUNDING_RULES = {
   none: (price) => price,
@@ -54,6 +54,14 @@ const computePrice = (basePrice, priceModifier = {}) => {
   const cost = Number(priceModifier.cost);
   if (Number.isFinite(cost) && cost > 0 && price < cost) {
     return { ok: false, reason: `computed price ${price.toFixed(2)} is below cost ${cost.toFixed(2)}` };
+  }
+
+  // Ceiling guardrail: a corrupt source price or bad multiplier surfaces as a
+  // skip-with-reason, never as a live absurd listing (competitor failure F-3:
+  // prices silently pushed to zero / nonsense at channel).
+  const maxPrice = Number(priceModifier.max_price);
+  if (Number.isFinite(maxPrice) && maxPrice > 0 && price > maxPrice) {
+    return { ok: false, reason: `computed price ${price.toFixed(2)} exceeds max_price ${maxPrice.toFixed(2)}` };
   }
 
   return { ok: true, price };

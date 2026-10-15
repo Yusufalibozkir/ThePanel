@@ -25,7 +25,8 @@ export const productsAPI = {
   create: (data) => api.post('/products', data),
   update: (id, data) => api.put(`/products/${id}`, data),
   delete: (id) => api.delete(`/products/${id}`),
-  markSold: (id, soldVia) => api.post(`/products/${id}/sold`, { sold_via: soldVia }),
+  markSold: (id, { sold_via, platform, external_order_id } = {}) =>
+    api.post(`/products/${id}/sold`, { sold_via, platform, external_order_id }),
   getChanges: (id, limit) => api.get(`/products/${id}/changes`, { params: { limit } }),
   deleteChange: (id, changeId) => api.delete(`/products/${id}/changes/${changeId}`),
   resetLocalEdits: (id) => api.delete(`/products/${id}/local-edits`),
@@ -34,6 +35,10 @@ export const productsAPI = {
   // Bulk-apply a notes template ({title}, {author}, …) to a selection of books
   applyNotesTemplate: (productIds, platform, template) =>
     api.post('/products/notes-template', { product_ids: productIds, platform, template }),
+  // PricePartner-style bulk reprice (± percent / ± amount / set-to) as local
+  // price overrides — Shopify truth untouched, journaled per book
+  reprice: (productIds, mode, value, dryRun = false) =>
+    api.post('/products/reprice', { product_ids: productIds, mode, value, dry_run: dryRun }),
 };
 
 // AbeBooks export-file channel (no live API: preview + generate TSV)
@@ -80,6 +85,19 @@ export const jobsAPI = {
   queueBackfill: (force = false) => api.post('/jobs/metadata/backfill', { force }),
   needsReview: () => api.get('/jobs/metadata/needs-review'),
   confirmMetadata: (id, fields) => api.post(`/jobs/products/${id}/metadata/confirm`, fields),
+};
+
+// Sync transparency (C-9) + needs-attention aggregation (C-10)
+export const statusAPI = {
+  getSync: () => api.get('/status/sync'),
+  getAttention: () => api.get('/status/attention'),
+};
+
+// Named reusable flow configurations (C-5)
+export const presetsAPI = {
+  list: (kind) => api.get('/presets', { params: { kind } }),
+  create: (name, kind, payload) => api.post('/presets', { name, kind, payload }),
+  remove: (id) => api.delete(`/presets/${id}`),
 };
 
 export default api;

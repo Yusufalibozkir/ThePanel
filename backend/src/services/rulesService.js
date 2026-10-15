@@ -3,29 +3,28 @@ const { db, query } = require('../config/database');
 class RulesService {
   getAll() {
     const rows = query('SELECT * FROM sync_rules ORDER BY platform').rows;
-    return rows.map((row) => ({
-      ...row,
-      enabled: Boolean(row.enabled),
-      auto_sync: Boolean(row.auto_sync),
-      conditions: JSON.parse(row.conditions || '{}'),
-      price_modifier: JSON.parse(row.price_modifier || '{}'),
-    }));
+    return rows.map((row) => this.parseRow(row));
   }
 
   getByPlatform(platform) {
     const row = query('SELECT * FROM sync_rules WHERE platform = ?', [platform]).rows[0];
-    if (!row) return null;
+    return row ? this.parseRow(row) : null;
+  }
+
+  parseRow(row) {
     return {
       ...row,
       enabled: Boolean(row.enabled),
       auto_sync: Boolean(row.auto_sync),
+      price_push: row.price_push === undefined ? true : Boolean(row.price_push),
+      stock_push: row.stock_push === undefined ? true : Boolean(row.stock_push),
       conditions: JSON.parse(row.conditions || '{}'),
       price_modifier: JSON.parse(row.price_modifier || '{}'),
     };
   }
 
   // Validate + persist a rule update. Unknown keys are rejected.
-  update(platform, { enabled, auto_sync, conditions, price_modifier }) {
+  update(platform, { enabled, auto_sync, price_push, stock_push, conditions, price_modifier }) {
     const existing = this.getByPlatform(platform);
     if (!existing) return null;
 
@@ -38,11 +37,13 @@ class RulesService {
 
     query(
       `UPDATE sync_rules
-       SET enabled = ?, auto_sync = ?, conditions = ?, price_modifier = ?
+       SET enabled = ?, auto_sync = ?, price_push = ?, stock_push = ?, conditions = ?, price_modifier = ?
        WHERE platform = ?`,
       [
         enabled === undefined ? existing.enabled : enabled ? 1 : 0,
         auto_sync === undefined ? existing.auto_sync : auto_sync ? 1 : 0,
+        price_push === undefined ? existing.price_push : price_push ? 1 : 0,
+        stock_push === undefined ? existing.stock_push : stock_push ? 1 : 0,
         JSON.stringify(nextConditions),
         JSON.stringify(nextModifier),
         platform,
@@ -78,11 +79,11 @@ class RulesService {
   }
 
   validatePriceModifier(m = {}) {
-    const allowed = new Set(['multiplier', 'fixed_fee', 'min_price', 'rounding']);
+    const allowed = new Set(['multiplier', 'fixed_fee', 'min_price', 'max_price', 'cost', 'rounding']);
     for (const key of Object.keys(m)) {
       if (!allowed.has(key)) return false;
     }
-    for (const key of ['multiplier', 'fixed_fee', 'min_price']) {
+    for (const key of ['multiplier', 'fixed_fee', 'min_price', 'max_price', 'cost']) {
       if (m[key] !== undefined && !Number.isFinite(Number(m[key]))) return false;
     }
     if (m.multiplier !== undefined && Number(m.multiplier) < 0) return false;

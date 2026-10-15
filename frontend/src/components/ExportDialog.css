@@ -35,6 +35,28 @@
   max-width: 560px;
 }
 
+.export-presets {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.export-presets label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-soft);
+}
+
+.export-preset-select {
+  border: 1px solid var(--border, #d8d2c4);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  background: var(--panel, #fff);
+}
+
 .export-dialog-body {
   padding: 20px 26px;
   overflow-y: auto;

@@ -1,0 +1,81 @@
+.sync-status-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 10px 16px;
+  margin: 0 0 14px;
+  border: 1px solid var(--border, #d8d2c4);
+  border-radius: 10px;
+  background: var(--panel, #faf8f4);
+  font-size: 13px;
+  color: var(--ink, #33302a);
+}
+
+.sync-status-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.sync-status-text strong {
+  font-weight: 600;
+}
+
+.sync-status-detail {
+  color: var(--muted, #7a7468);
+}
+
+.sync-status-warn {
+  color: #b26a00;
+  font-size: 12px;
+  border: 1px solid #e3c37a;
+  background: #fdf6e3;
+  border-radius: 6px;
+  padding: 1px 7px;
+}
+
+.sync-status-failed {
+  color: #a03024;
+}
+
+.sync-attention-chip {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  background: none;
+  font-family: inherit;
+}
+
+.sync-attention-chip.clear {
+  color: #2e7d4f;
+  border-color: #bfe0cc;
+  background: #eef7f1;
+  cursor: default;
+}
+
+.sync-attention-chip.has-attention {
+  color: #a03024;
+  border-color: #ecc7c1;
+  background: #fbeeed;
+}
+
+.sync-attention-chip.has-attention:hover {
+  background: #f6e2df;
+}
+
+.sync-attention-detail {
+  color: var(--muted, #7a7468);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 420px;
+}

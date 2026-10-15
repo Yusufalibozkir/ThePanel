@@ -31,6 +31,16 @@ test('skips when computed price is below cost', () => {
   assert.match(result.reason, /below cost/);
 });
 
+test('max_price ceiling guardrail: skips above the ceiling, passes under it', () => {
+  const over = computePrice(20, { multiplier: 1.1, max_price: 15 });
+  assert.equal(over.ok, false);
+  assert.match(over.reason, /exceeds max_price/);
+
+  const under = computePrice(10, { multiplier: 1.1, max_price: 15, rounding: 'none' });
+  assert.equal(under.ok, true);
+  assert.equal(under.price, 11);
+});
+
 test('rejects invalid inputs instead of throwing', () => {
   assert.equal(computePrice(-5, {}).ok, false);
   assert.equal(computePrice('abc', {}).ok, false);

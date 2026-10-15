@@ -34,4 +34,8 @@ router.put('/:id/listings/:platform/fields', productController.updateListingFiel
 // Bulk-apply a notes template to a selection ({ product_ids, platform, template })
 router.post('/notes-template', productController.applyNotesTemplate);
 
+// PricePartner-style bulk reprice ({ product_ids, mode, value, dry_run }) —
+// applies local price overrides (Shopify truth untouched, journaled)
+router.post('/reprice', productController.reprice);
+
 module.exports = router;

@@ -153,6 +153,18 @@
   gap: 10px;
 }
 
+.rule-push-switches {
+  display: flex;
+  gap: 18px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.rule-push-switches .toggle {
+  font-size: 12.5px;
+}
+
 .rule-conditions {
   display: flex;
   flex-wrap: wrap;

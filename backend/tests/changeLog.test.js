@@ -45,6 +45,33 @@ testDb.exec(`
     changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
   );
+  CREATE TABLE platform_listings (
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    product_id TEXT NOT NULL,
+    platform TEXT NOT NULL CHECK(platform IN ('ebay', 'abebooks', 'etsy')),
+    platform_listing_id TEXT,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'publishing', 'exported', 'active', 'sold', 'error', 'delisted')),
+    external_price REAL,
+    platform_url TEXT,
+    notes TEXT,
+    title_override TEXT,
+    sync_enabled INTEGER NOT NULL DEFAULT 1,
+    last_synced_at DATETIME,
+    last_exported_at DATETIME,
+    error_message TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+    UNIQUE(product_id, platform)
+  );
+  CREATE TABLE channel_orders (
+    platform TEXT NOT NULL,
+    external_order_id TEXT NOT NULL,
+    product_id TEXT NOT NULL,
+    closed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (platform, external_order_id),
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+  );
 `);
 
 const dbConfig = require('../src/config/database');

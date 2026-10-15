@@ -182,6 +182,8 @@ function RuleEditor({ rule, onSaved }) {
       const res = await rulesAPI.update(draft.platform, {
         enabled: draft.enabled,
         auto_sync: draft.auto_sync,
+        price_push: draft.price_push !== false,
+        stock_push: draft.stock_push !== false,
         conditions: draft.conditions,
         price_modifier: draft.price_modifier,
       });
@@ -259,6 +261,34 @@ function RuleEditor({ rule, onSaved }) {
           />
         </div>
         <div className="form-group">
+          <label>Max price ($) — skip above</label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            title="Ceiling guardrail: a computed price above this is skipped with a reason, never listed"
+            value={modifier.max_price ?? ''}
+            placeholder="no ceiling"
+            onChange={(e) =>
+              setModifier({ max_price: e.target.value === '' ? undefined : parseFloat(e.target.value) })
+            }
+          />
+        </div>
+        <div className="form-group">
+          <label>Cost ($) — skip below</label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            title="Bottom guardrail: never list below cost"
+            value={modifier.cost ?? ''}
+            placeholder="no floor"
+            onChange={(e) =>
+              setModifier({ cost: e.target.value === '' ? undefined : parseFloat(e.target.value) })
+            }
+          />
+        </div>
+        <div className="form-group">
           <label>Rounding</label>
           <select value={modifier.rounding || 'up_x99'} onChange={(e) => setModifier({ rounding: e.target.value })}>
             {ROUNDINGS.map((r) => (
@@ -268,6 +298,25 @@ function RuleEditor({ rule, onSaved }) {
             ))}
           </select>
         </div>
+      </div>
+
+      <div className="rule-push-switches">
+        <label className="toggle" title="When disabled, pushes update stock but never the computed price">
+          <input
+            type="checkbox"
+            checked={draft.price_push !== false}
+            onChange={(e) => setDraft({ ...draft, price_push: e.target.checked })}
+          />
+          <span>Price push</span>
+        </label>
+        <label className="toggle" title="When disabled, pushes never change channel quantity">
+          <input
+            type="checkbox"
+            checked={draft.stock_push !== false}
+            onChange={(e) => setDraft({ ...draft, stock_push: e.target.checked })}
+          />
+          <span>Stock push</span>
+        </label>
       </div>
 
       {draft.platform === 'etsy' && (

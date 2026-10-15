@@ -2,7 +2,16 @@ const { db, query } = require('../config/database');
 
 // Durable in-process job queue backed by the jobs table. No Redis.
 
-const JOB_TYPES = ['list', 'update', 'end_listing', 'sync_shopify', 'export_abebooks', 'backfill_metadata'];
+const JOB_TYPES = [
+  'list',
+  'update',
+  'end_listing',
+  'sync_shopify',
+  'export_abebooks',
+  'backfill_metadata',
+  'mark_sold',
+  'update_shopify_inventory',
+];
 
 const enqueue = (type, payload = {}, { maxAttempts = 3, delaySeconds = 0 } = {}) => {
   if (!JOB_TYPES.includes(type)) {

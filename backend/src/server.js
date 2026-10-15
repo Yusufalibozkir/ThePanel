@@ -26,6 +26,8 @@ const rulesRoutes = require('./routes/rules');
 const jobsRoutes = require('./routes/jobs');
 const logsRoutes = require('./routes/logs');
 const abebooksRoutes = require('./routes/abebooks');
+const statusRoutes = require('./routes/status');
+const presetsRoutes = require('./routes/presets');
 
 // Use routes
 app.use('/api/shopify', shopifyRoutes);
@@ -36,11 +38,14 @@ app.use('/api/rules', rulesRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/logs', logsRoutes);
 app.use('/api/abebooks', abebooksRoutes);
+app.use('/api/status', statusRoutes);
+app.use('/api/presets', presetsRoutes);
 
-// Durable job runner (retries + backoff)
+// Durable job runner (retries + backoff) + scheduled Shopify polling (W2)
 const jobRunner = require('./jobs/runner');
 require('./jobs/handlers');
 jobRunner.start();
+require('./jobs/scheduler').start();
 
 // Start server (localhost-only)
 const HOST = process.env.HOST || '127.0.0.1';

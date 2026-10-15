@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { abebooksAPI } from '../api';
+import { useEffect, useState } from 'react';
+import { abebooksAPI, presetsAPI } from '../api';
 import { AlertIcon, CheckIcon, CloseIcon } from './icons';
 import './ExportDialog.css';
 
@@ -7,6 +7,7 @@ import './ExportDialog.css';
 // export / current selection), preview the composed rows plus the skip report,
 // then generate the TSV. Generating commits the export baseline — every
 // included book is marked 'exported', so the next delta starts clean.
+// The chosen mode can be saved as a named preset (C-5) and reused.
 
 const MODES = [
   {
@@ -34,6 +35,31 @@ export default function ExportDialog({ initialProductIds = null, onClose, onExpo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [done, setDone] = useState(null);
+  const [presets, setPresets] = useState([]);
+
+  useEffect(() => {
+    presetsAPI
+      .list('abebooks_export')
+      .then((res) => setPresets(res.data.presets || []))
+      .catch(() => setPresets([]));
+  }, []);
+
+  const savePreset = () => {
+    const name = prompt('Save current export options as a preset named:');
+    if (!name?.trim()) return;
+    presetsAPI
+      .create(name.trim(), 'abebooks_export', { mode })
+      .then(() => presetsAPI.list('abebooks_export'))
+      .then((res) => setPresets(res.data.presets || []))
+      .catch((err) => setError(err.response?.data?.message || err.message));
+  };
+
+  const applyPreset = (name) => {
+    const preset = presets.find((p) => p.name === name);
+    if (!preset || !preset.payload?.mode) return;
+    if (preset.payload.mode === 'selection' && !hasSelection) return;
+    setMode(preset.payload.mode);
+  };
 
   const requestBody = () => {
     const body = { mode };
@@ -103,6 +129,36 @@ export default function ExportDialog({ initialProductIds = null, onClose, onExpo
         </div>
 
         <div className="export-dialog-body">
+          {presets.length > 0 && (
+            <div className="export-presets">
+              <label>
+                Preset:
+                <select
+                  value=""
+                  onChange={(e) => e.target.value && applyPreset(e.target.value)}
+                  className="export-preset-select"
+                >
+                  <option value="">Load…</option>
+                  {presets.map((p) => (
+                    <option key={p.id} value={p.name}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button className="btn btn-secondary btn-small" onClick={savePreset}>
+                Save current as preset…
+              </button>
+            </div>
+          )}
+          {presets.length === 0 && (
+            <div className="export-presets">
+              <button className="btn btn-secondary btn-small" onClick={savePreset}>
+                Save current options as preset…
+              </button>
+            </div>
+          )}
+
           <div className="export-modes">
             {MODES.map((m) => (
               <label

@@ -2,6 +2,11 @@
 
 > Supersedes v1. Refined after architecture review on 2026-10-14.
 > Phase 1 (Shopify sync → dashboard) exists; this plan governs everything from here on.
+> v2.1 (Oct 16, 2026): refinements informed by competitor research — see
+> `documentation/competitor_deep_dive.md` (Part 6 maps each learned pattern to this
+> plan). Changes: `publishing` listing status, per-feature push switches,
+> `channel_orders` sale idempotency, pricing ceiling guardrail, W3 closeBook
+> semantics, AbeBooks sold-marking shipped.
 
 ## Locked Decisions
 
@@ -53,9 +58,15 @@ Existing 5 tables stay; changes below.
 
 ### `platform_listings`
 - `platform` enum becomes: `ebay`, `etsy`, `abebooks`.
+- `status` state machine (v2.1, aligned with documented marketplace lifecycles):
+  `draft → publishing → active/exported → sold | error → delisted`.
+  `publishing` is the transient state a job owns between "publish clicked" and
+  "channel API confirmed" — the UI shows honest in-flight pushes instead of a
+  spinner over `draft`.
 - For AbeBooks rows: `status` = `draft` (generated, not yet exported), `exported` (included in last export file), `sold`, `error`, `delisted`. `platform_url` stays null; add `last_exported_at`.
 - Add `external_price` (renamed from `platform_price` in code only if convenient — no data migration needed yet).
 - Add `notes` + `title_override` (v3): panel-owned per-platform content. The main description always comes from `products.description` (Shopify truth); these fields are composed in at listing/export time. Every change is journaled into `product_changes` scoped to the platform.
+- `sync_enabled` semantics (dual, per competitor convention): `sync_rules.enabled` decides *should* (rule eligibility); the listing's `sync_enabled` decides *may* (this specific book participates on the platform).
 
 ### `sync_rules`
 - Keep structure. Add per-platform defaults seeded on first run:
@@ -63,6 +74,12 @@ Existing 5 tables stay; changes below.
   - Etsy: base × 1.20, min $10.00, `vintage_only` filter (year cutoff configurable, default 2006)
   - AbeBooks: base × 1.15, min $4.50, conditions filter (new, like_new, very_good, good)
 - `conditions` JSON supports: `min_price`, `max_price`, `conditions[]`, `year_before`, `year_after`, `tags_any[]`, `tags_all[]`.
+- v2.1: **`price_push` / `stock_push` switches** (both default on) — the
+  per-channel × per-feature enablement matrix every multichannel tool exposes
+  (e.g. push stock to eBay but not price). The channel adapters must honor
+  them on every push; the rules editor UI renders them as two toggles on the
+  platform card. `price_modifier` accepts the pricing engine's full input set:
+  `multiplier`, `fixed_fee`, `min_price`, `max_price`, `cost`, `rounding`.
 
 ### `sync_logs`
 - Keep. Add `platform` value `abebooks` for export operations.
@@ -81,8 +98,18 @@ Existing 5 tables stay; changes below.
 - Keep. Credentials encrypted at rest (AES-256-GCM, key in `APP_ENCRYPTION_KEY` env var). Never returned to the frontend — only a masked preview + `last_validated_at`.
 
 ### `jobs` (new)
-- Durable in-process queue: `id`, `type` (`list`, `update`, `end_listing`, `sync_shopify`, `export_abebooks`), `payload` (JSON), `status` (`pending`, `running`, `done`, `failed`), `attempts`, `max_attempts` (3), `next_run_at`, `last_error`, timestamps.
+- Durable in-process queue: `id`, `type` (`list`, `update`, `end_listing`, `sync_shopify`, `export_abebooks`, `backfill_metadata`, `mark_sold`, `update_shopify_inventory`), `payload` (JSON), `status` (`pending`, `running`, `done`, `failed`), `attempts`, `max_attempts` (3), `next_run_at`, `last_error`, timestamps.
 - Runner polls every few seconds; exponential backoff on failure. No Redis.
+- `end_listing` / `update_shopify_inventory` handlers arrive with the Phase 3/4
+  adapters — until a handler is registered the runner fails unknown types, so
+  nothing queues them yet (the closeBook data-side runs inline today; see W3).
+
+### `channel_orders` (v2.1 — W3 sale idempotency)
+- `(platform, external_order_id)` PK + `product_id` + `closed_at`.
+- One channel order closes a book **exactly once**: double-reported sales
+  (webhook + poll, retry, manual re-mark) never rewrite `sold_at` or re-journal.
+  This table exists because every documented overselling incident in the
+  competitor research traces to missing exactly this dedup.
 
 ---
 
@@ -133,8 +160,8 @@ platform_price = max( base_price × multiplier + fixed_fee , min_price )
 then apply rounding rule (default: round up to X.99)
 ```
 
-- All inputs from `sync_rules` (per platform): `multiplier`, `fixed_fee`, `min_price`, `rounding`.
-- Guardrails: never list below `min_price`; skip (with log) if computed price < cost.
+- All inputs from `sync_rules` (per platform): `multiplier`, `fixed_fee`, `min_price`, `max_price`, `cost`, `rounding`.
+- Guardrails (v2.1 — all three, surfaced as skip-with-reason, never silent): never list below `min_price`; skip if computed price < `cost` (bottom guard); skip if computed price > `max_price` (ceiling — a corrupt source price or bad multiplier must surface as a skipped row, not a live absurd listing).
 - Ship as a pure module with unit tests — this is the first thing built in Phase 2 since everything else depends on it.
 
 ---
@@ -151,11 +178,11 @@ then apply rounding rule (default: round up to X.99)
 - **MVP:** scheduled polling (default every 30 min) + manual "Sync now".
 - **Later (optional):** Shopify webhooks via public URL (Cloudflare Tunnel); only worth it if polling proves insufficient.
 
-### W3 — Sale on a channel (single-copy model)
-1. Channel reports sale (eBay webhook/notification or manual mark for Etsy/AbeBooks/Shopify).
-2. Set product `quantity = 0`, `sold_at`, `sold_via`.
-3. Queue `end_listing` jobs for every other active listing.
-4. Shopify quantity update queued as well (so the store stays accurate).
+### W3 — Sale on a channel (single-copy model) ✅ data side
+1. Channel reports sale (eBay order poll, Etsy receipt sync, or manual mark for Etsy/AbeBooks/Shopify). `POST /api/products/:id/sold` accepts `sold_via`, `platform`, `external_order_id`.
+2. **closeBook() (implemented in `productService.markSold`):** record `(platform, external_order_id)` in `channel_orders` (idempotent — a repeat report returns `already_closed` without touching the closure); first sale wins `sold_at`/`sold_via`; quantity 0 recorded as manual overlay; every live `platform_listings` row (`draft`/`publishing`/`active`/`exported`) set to `sold`. Error/delisted rows untouched.
+3. Queue `end_listing` jobs for every other active listing — **Phase 3**: the eBay `withdrawOffer` / Etsy deactivate calls; nothing queues them until the adapter handlers exist.
+4. Shopify quantity update queued as well (so the store stays accurate) — **Phase 3** (`update_shopify_inventory` handler; GraphQL `inventorySetQuantities`).
 
 ### W4 — Manual sync
 - Per product ("Sync", "Delist") and bulk ("Sync all eligible"). Progress + summary: "3 created, 5 updated, 1 failed, 4 skipped (metadata missing)".
@@ -193,31 +220,85 @@ then apply rounding rule (default: round up to X.99)
 ## Implementation Phases (v2)
 
 **Phase 2 — Foundation hardening + engines (no channel APIs)**
-- [ ] Task 0 cleanup (above)
-- [ ] GraphQL Admin API sync client (replaces REST)
-- [ ] Metadata pipeline: tag parser, OpenLibrary enrichment, backfill script, `metadata_status`
-- [ ] Pricing engine + rules evaluation (pure modules + unit tests)
-- [ ] Credential vault (encrypted storage + masked API + test-connection stubs)
-- [ ] Jobs table + runner with retries
-- [ ] Frontend: settings/credentials view, rules editor, metadata review view
+- [x] Task 0 cleanup (above)
+- [x] GraphQL Admin API sync client (replaces REST)
+- [x] Metadata pipeline: tag parser, OpenLibrary enrichment, backfill script, `metadata_status`
+- [x] Pricing engine + rules evaluation (pure modules + unit tests; min/cost/max guardrails)
+- [x] Credential vault (encrypted storage + masked API + test-connection stubs)
+- [x] Jobs table + runner with retries
+- [x] Frontend: settings/credentials view, rules editor, metadata review view
+- [x] **v2.1 research refinements:** `publishing` status, `price_push`/`stock_push` rule switches, `channel_orders` sale idempotency, W3 closeBook (`productService.markSold`), pricing ceiling guardrail
+- [x] **Scheduled Shopify polling (W2)** — `jobs/scheduler.js`, `SYNC_POLL_MINUTES` (default 30, 0 = off), state persisted in `panel_state`, in-flight dedupe
+- [x] **Sync transparency (C-9) + attention aggregation (C-10)** — `GET /api/status/sync` (cadence, next run, last run stats, queue health) and `GET /api/status/attention` (error listings + failed jobs + metadata gaps); frontend `SyncStatusCard`
+- [x] **Bulk reprice / PricePartner (C-7)** — `POST /api/products/reprice` (percent/amount/set, dry-run diff → journaled local overrides); frontend `RepriceDialog` from the bulk bar
+- [x] **Presets (C-5)** — `presets` table + CRUD API; export dialog saves/loads named mode presets
+- [x] **Setup checklist (C-1)** — frontend `GettingStarted` card, completion derived from live state (catalog, metadata, rules, credentials, first export)
+- [x] **Rules card (C-12)** — max_price/cost guardrail inputs + price/stock push toggles in the rules editor
 
 **Phase 3 — eBay end-to-end**
 - [ ] eBay developer app + OAuth flow
-- [ ] Adapter: create/update/end listings via Sell Inventory API
-- [ ] Wire rules → pricing → listing flow; sale detection; W3 delist-everywhere flow
+- [ ] Adapter: create/update/end listings via Sell Inventory API — object model, publish-required fields, and call sequences are specified in `documentation/competitor_deep_dive.md` Part 3.1 (adapter contract: `testConnection` / `createDraft` / `publish` / `update` / `end` / `fetchSales`; per-channel profile object holds category, condition map, business-policy IDs — data in settings, not code constants)
+- [ ] `end_listing` + `update_shopify_inventory` job handlers (W3 fan-out; closeBook data side already runs)
+- [ ] Wire rules → pricing → listing flow; sale detection (Fulfillment API order poll); W3 delist-everywhere flow
 - [ ] Logs + error UI; "Needs attention" view
+- [ ] Two-phase push UI: compose → preview table (per-row skip reasons) → per-item publish jobs (same shape as the AbeBooks export preview/generate); listings show the `publishing` transient state
 
 **Phase 4 — AbeBooks export + Etsy**
 - [x] AbeBooks export file generator: modes (full/delta/selection), preview + skip report, download, export baseline, run logging
 - [x] Listing composition (`listingComposer.js`): title override, notes folding, condition mapping, SKU capture — shared by all channels
 - [x] Bulk selection + notes templates with per-book variables
-- [ ] AbeBooks manual sold-marking flow (closes the book everywhere)
+- [x] AbeBooks manual sold-marking flow (closes the book everywhere) — `POST /api/products/:id/sold` with `platform` + `external_order_id`, idempotent via `channel_orders`
 - [ ] Etsy app approval (apply early in Phase 3), OAuth, adapter, vintage-rule enforcement
 
 **Phase 5 — Automation + polish**
-- [ ] Scheduled polling sync (W2), Shopify delete handling (W6)
+- [x] Scheduled polling sync (W2) — scheduler + status card shipped (v2.1); optional webhooks via tunnel remain
 - [ ] Optional webhooks via tunnel
 - [ ] Bulk operations, performance, final consolidation of docs
+- [ ] Channel-status badge grammar refinement on the overview rows (chip states exist; add click-to-filter per state)
+- [ ] Bulk grid column chooser (C-4) — editable columns for enabled/price/notes
+- [ ] Future: adopt-existing-listings flow (C-14 match review: SKU/UPC match → Ready/Close/No-match buckets → link) when existing eBay/Etsy listings must be brought under panel management
+
+---
+
+## Research-informed product decisions (v2.1)
+
+Distilled from `documentation/competitor_deep_dive.md` (full pattern catalog in its
+Part 4/6). These shape the frontend work in Phases 2–5:
+
+1. **Single-writer doctrine, made visible.** Shopify owns product truth; the panel
+   owns listings; channels report sales only. Shopify-owned fields render *locked*
+   in the UI with an "edit in Shopify / add local override" affordance (Sellbrite's
+   locked-fields pattern) — never an editable field that silently loses to the next
+   sync.
+2. **Two-phase commit everywhere.** Every push (already true for AbeBooks export)
+   is compose → preview with per-row skip reasons → per-item jobs. Batch summaries
+   in the W4 format ("3 created, 5 updated, 1 failed, 4 skipped (metadata missing)")
+   with per-item error visibility — batch-level red/green is the #1 complaint
+   against competitors.
+3. **Channel-status badge grammar on every book row.** One chip per platform:
+   active/synced (green), draft/publishing/stale (amber), error (red), exported
+   (blue), not-listed (gray), sold (slash). Click-to-filter. The LitCommerce
+   chain-dot pattern applied to our state model.
+4. **Sync transparency.** Status card: "polls Shopify every 30 min · next 14:32 ·
+   last run: 3 created, 1 failed." Publish the cadence (LitCommerce's "we put a
+   number on it").
+5. **Per-channel rules card.** One card per platform: enabled + auto-list toggles,
+   price adjustments (multiplier/fixed/min/max/cost/rounding), `price_push` /
+   `stock_push` switches, channel filters, and (Phase 3+) the channel profile
+   (category, condition map, business policies) as editable settings data.
+6. **Irreversible-action warnings.** Delist-everywhere, export generate (marks
+   books exported), bulk log purge, bulk reprice: name what changes, the count,
+   and what cannot be undone.
+7. **"Needs attention" as one aggregated filter.** Error-status books + exhausted
+   jobs + `metadata_status='missing'` books blocked by rules.
+8. **Numbered setup checklist ending at "sync on"** — persisted per-step
+   completion; ships last, when every step's screen exists.
+9. **PricePartner-style bulk reprice** (selection → ± amount / ± % / set-to,
+   previewed through the pricing engine, journaled) as a bulk action.
+
+Explicitly *not* adopted from competitors: two-way inventory sync, multi-warehouse /
+FBA routing, reserved-inventory math, order-based fees, fulfillment layers — all
+solve problems the single-copy, single-operator, Shopify-master model deleted.
 
 ---
 
